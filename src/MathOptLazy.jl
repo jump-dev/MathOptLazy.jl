@@ -184,16 +184,6 @@ function MOI.supports(
     return MOI.supports(model.inner, arg, MOI.VariableIndex)
 end
 
-function MOI.set(
-    model::Optimizer,
-    attr::MOI.AbstractVariableAttribute,
-    indices::Vector{<:MOI.VariableIndex},
-    args::Vector{T},
-) where {T}
-    MOI.set.(model, attr, indices, args)
-    return
-end
-
 ### AbstractConstraintAttribute
 
 function MOI.is_valid(model::Optimizer, ci::MOI.ConstraintIndex)
@@ -210,10 +200,13 @@ end
 
 function MOI.set(
     model::Optimizer,
-    attr::MOI.AbstractConstraintAttribute,
-    indices::Vector{<:MOI.ConstraintIndex},
-    args::Vector{T},
-) where {T}
+    attr::Union{
+        MOI.AbstractConstraintAttribute,
+        MOI.AbstractVariableAttribute,
+    },
+    indices::Vector,
+    args::Vector,
+)
     MOI.set.(model, attr, indices, args)
     return
 end
@@ -385,6 +378,33 @@ function MOI.get(
         ret = filter!(ci -> !(ci in in_model), ret)
     end
     return ret
+end
+
+function MOI.supports(
+    model::Optimizer,
+    ::MOI.AbstractConstraintAttribute,
+    ::Type{MOI.ConstraintIndex{F,LazyScalarSet{S}}},
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    return false
+end
+
+function MOI.get(
+    model::Optimizer,
+    attr::MOI.AbstractConstraintAttribute,
+    ::MOI.ConstraintIndex{F,LazyScalarSet{S}},
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    msg = "This attribute is not supported for lazy constraints"
+    return throw(MOI.GetAttributeNotAllowed(attr, msg))
+end
+
+function MOI.set(
+    model::Optimizer,
+    attr::MOI.AbstractConstraintAttribute,
+    ::MOI.ConstraintIndex{F,LazyScalarSet{S}},
+    value::Any,
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    msg = "This attribute is not supported for lazy constraints"
+    return throw(MOI.SetAttributeNotAllowed(attr, msg))
 end
 
 ### MOI.optimize!

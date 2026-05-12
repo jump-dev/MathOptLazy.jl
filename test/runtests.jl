@@ -33,7 +33,8 @@ function test_jump_cached_knapsack()
     model = Model(() -> MathOptLazy.Optimizer(HiGHS.Optimizer))
     set_silent(model)
     @variable(model, x[1:N] >= 0, Int)
-    @constraint(model, [i in 1:N], x[i] <= 1, MathOptLazy.Lazy())
+    @constraint(model, c[i in 1:N], x[i] <= 1, MathOptLazy.Lazy())
+    @test endswith(sprint(show, c[1]), " [lazy]")
     @constraint(model, sum(abs(cos(i)) * x[i] for i in 1:N) <= 0.1 * N)
     @objective(model, Max, sum(abs(sin(i)) * x[i] for i in 1:N))
     optimize!(model)
@@ -55,6 +56,18 @@ function test_jump_direct_knapsack()
     @test termination_status(model) == OPTIMAL
     @test primal_status(model) == FEASIBLE_POINT
     @test all(<=(1 + 1e-6), value(x))
+    return
+end
+
+function test_jump_broadcast()
+    model = Model(() -> MathOptLazy.Optimizer(HiGHS.Optimizer))
+    @variable(model, x[1:3])
+    c = @constraint(model, x .<= 1:3, MathOptLazy.Lazy())
+    @test c isa Vector && length(c) == 3
+    for (i, ci) in enumerate(c)
+        @test constraint_object(ci).set ==
+              MathOptLazy.LazyScalarSet(MOI.LessThan{Float64}(i))
+    end
     return
 end
 
@@ -116,6 +129,16 @@ function _basic_constraint_test_helper(
     @test length(MOI.get(model, MOI.ListOfConstraintIndices{F,S}())) == 3
     c_indices = MOI.get(model, MOI.ListOfConstraintIndices{F,S}())
     @test all(MOI.is_valid.(model, c_indices))
+    MOI.set(model, MOI.ConstraintName(), [c_inner], ["c"])
+    @test MOI.get(model, MOI.ConstraintName(), [c_inner]) == ["c"]
+    @test_throws(
+        MOI.SetAttributeNotAllowed,
+        MOI.set(model, MOI.ConstraintName(), [c], ["c"]),
+    )
+    @test_throws(
+        MOI.GetAttributeNotAllowed,
+        MOI.get(model, MOI.ConstraintName(), [c]),
+    )
     return
 end
 
@@ -133,7 +156,7 @@ function test_basic_scalaraffinefunction_lessthan()
     _basic_constraint_test_helper(MOI.LessThan(1.0); activate = true) do x
         return sum(sin(i) * x[i] for i in 1:length(x))
     end
-        _basic_constraint_test_helper(MOI.LessThan(1.0); activate = false) do x
+    _basic_constraint_test_helper(MOI.LessThan(1.0); activate = false) do x
         return sum(sin(i) * x[i] for i in 1:length(x))
     end
     return
