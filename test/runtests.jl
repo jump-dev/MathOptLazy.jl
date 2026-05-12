@@ -70,22 +70,32 @@ end
 
 function _basic_constraint_test_helper(
     function_fn::Function,
-    set::MOI.AbstractScalarSet,
+    inner_set::MOI.AbstractScalarSet;
+    activate::Bool,
 )
     model = MathOptLazy.Optimizer(HiGHS.Optimizer)
     config = MOI.Test.Config()
-    set = MathOptLazy.LazyScalarSet(set)
+    set = MathOptLazy.LazyScalarSet(inner_set)
     N = MOI.dimension(set)
     x = MOI.add_variables(model, 3)
     constraint_function = function_fn(x)
-    @assert MOI.output_dimension(constraint_function) == N
-    F, S = typeof(constraint_function), typeof(set)
+    @test MOI.output_dimension(constraint_function) == N
+    F, S, IS = typeof(constraint_function), typeof(set), typeof(inner_set)
     @test MOI.supports_constraint(model, F, S)
     @test MOI.get(model, MOI.NumberOfConstraints{F,S}()) == 0
     c = MOI.add_constraint(model, constraint_function, set)
+    if activate
+        data = MathOptLazy._data(model, F, IS)
+        for (i, (f, s)) in enumerate(data.data)
+            data.index[i] = MOI.add_constraint(model.inner, f, s)
+            data.active[i] = true
+        end
+    end
+    c_inner = MOI.add_constraint(model, constraint_function, inner_set)
     @test MOI.get(model, MOI.NumberOfConstraints{F,S}()) == 1
-    c_indices = MOI.get(model, MOI.ListOfConstraintIndices{F,S}())
-    @test c_indices == [c]
+    @test MOI.get(model, MOI.NumberOfConstraints{F,IS}()) == 1
+    @test MOI.get(model, MOI.ListOfConstraintIndices{F,S}()) == [c]
+    @test MOI.get(model, MOI.ListOfConstraintIndices{F,IS}()) == [c_inner]
     @test (F, S) in MOI.get(model, MOI.ListOfConstraintTypesPresent())
     @test MOI.is_valid(model, c)
     @test !MOI.is_valid(model, typeof(c)(c.value + 1)) isa Bool
@@ -110,18 +120,22 @@ function _basic_constraint_test_helper(
 end
 
 function test_basic_scalaraffinefunction_greaterthan()
-    _basic_constraint_test_helper(
-        x -> sum(sin(i) * x[i] for i in 1:length(x)),
-        MOI.GreaterThan(1.0)
-    )
+    _basic_constraint_test_helper(MOI.GreaterThan(1.0); activate = true) do x
+        return sum(sin(i) * x[i] for i in 1:length(x))
+    end
+    _basic_constraint_test_helper(MOI.GreaterThan(1.0); activate = false) do x
+        return sum(sin(i) * x[i] for i in 1:length(x))
+    end
     return
 end
 
 function test_basic_scalaraffinefunction_lessthan()
-    _basic_constraint_test_helper(
-        x -> sum(sin(i) * x[i] for i in 1:length(x)),
-        MOI.LessThan(1.0)
-    )
+    _basic_constraint_test_helper(MOI.LessThan(1.0); activate = true) do x
+        return sum(sin(i) * x[i] for i in 1:length(x))
+    end
+        _basic_constraint_test_helper(MOI.LessThan(1.0); activate = false) do x
+        return sum(sin(i) * x[i] for i in 1:length(x))
+    end
     return
 end
 
