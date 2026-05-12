@@ -75,6 +75,10 @@ struct _LazyData{F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
     end
 end
 
+Base.length(x::_LazyData) = length(x.data)
+
+Base.isempty(x::_LazyData) = isempty(x.data)
+
 ### Optimizer
 
 """
@@ -180,16 +184,6 @@ function MOI.supports(
     return MOI.supports(model.inner, arg, MOI.VariableIndex)
 end
 
-function MOI.set(
-    model::Optimizer,
-    attr::MOI.AbstractVariableAttribute,
-    indices::Vector{<:MOI.VariableIndex},
-    args::Vector{T},
-) where {T}
-    MOI.set.(model, attr, indices, args)
-    return
-end
-
 ### AbstractConstraintAttribute
 
 function MOI.is_valid(model::Optimizer, ci::MOI.ConstraintIndex)
@@ -206,10 +200,10 @@ end
 
 function MOI.set(
     model::Optimizer,
-    attr::MOI.AbstractConstraintAttribute,
-    indices::Vector{<:MOI.ConstraintIndex},
-    args::Vector{T},
-) where {T}
+    attr::Union{MOI.AbstractConstraintAttribute,MOI.AbstractVariableAttribute},
+    indices::Vector,
+    args::Vector,
+)
     MOI.set.(model, attr, indices, args)
     return
 end
@@ -286,7 +280,22 @@ function MOI.is_valid(
     ci::MOI.ConstraintIndex{F,LazyScalarSet{S}},
 ) where {F,S}
     data = _data(model, F, S)
-    return data !== nothing && 1 <= ci.value <= length(data.data)
+    return data !== nothing && 1 <= ci.value <= length(data)
+end
+
+function MOI.get(
+    model::Optimizer,
+    ::MOI.ListOfConstraintIndices{F,LazyScalarSet{S}},
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    n = length(_data(model, F, S))
+    return [MOI.ConstraintIndex{F,LazyScalarSet{S}}(i) for i in 1:n]
+end
+
+function MOI.get(
+    model::Optimizer,
+    ::MOI.NumberOfConstraints{F,LazyScalarSet{S}},
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    return length(_data(model, F, S))
 end
 
 function MOI.add_constraint(
@@ -298,23 +307,101 @@ function MOI.add_constraint(
     push!(data.data, (f, s.set))
     push!(data.active, false)
     push!(data.index, MOI.ConstraintIndex{F,S}(0))
-    return MOI.ConstraintIndex{F,LazyScalarSet{S}}(length(data.data))
+    return MOI.ConstraintIndex{F,LazyScalarSet{S}}(length(data))
 end
 
 function MOI.get(
     model::Optimizer,
     ::MOI.ConstraintFunction,
     ci::MOI.ConstraintIndex{F,LazyScalarSet{S}},
-) where {F,S}
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
     return _data(model, F, S).data[ci.value][1]
+end
+
+function MOI.get(
+    model::Optimizer,
+    ::MOI.CanonicalConstraintFunction,
+    ci::MOI.ConstraintIndex{F,LazyScalarSet{S}},
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    return MOI.Utilities.canonical(MOI.get(model, MOI.ConstraintFunction(), ci))
 end
 
 function MOI.get(
     model::Optimizer,
     ::MOI.ConstraintSet,
     ci::MOI.ConstraintIndex{F,LazyScalarSet{S}},
-) where {F,S}
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
     return LazyScalarSet(_data(model, F, S).data[ci.value][2])
+end
+
+function MOI.get(
+    model::Optimizer{T},
+    ::MOI.ListOfConstraintTypesPresent,
+) where {T}
+    ret = MOI.get(model.inner, MOI.ListOfConstraintTypesPresent())
+    if !isempty(model.saf_gt)
+        push!(
+            ret,
+            (MOI.ScalarAffineFunction{T}, LazyScalarSet{MOI.GreaterThan{T}}),
+        )
+    end
+    if !isempty(model.saf_lt)
+        push!(
+            ret,
+            (MOI.ScalarAffineFunction{T}, LazyScalarSet{MOI.LessThan{T}}),
+        )
+    end
+    return ret
+end
+
+function MOI.get(
+    model::Optimizer,
+    attr::MOI.NumberOfConstraints{F,S},
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    n = MOI.get(model.inner, attr)
+    if (data = _data(model, F, S)) !== nothing
+        n -= sum(data.active)
+    end
+    return n
+end
+
+function MOI.get(
+    model::Optimizer,
+    attr::MOI.ListOfConstraintIndices{F,S},
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    ret = MOI.get(model.inner, attr)
+    if (data = _data(model, F, S)) !== nothing
+        in_model = Set(ci for (ci, z) in zip(data.index, data.active) if z)
+        ret = filter!(ci -> !(ci in in_model), ret)
+    end
+    return ret
+end
+
+function MOI.supports(
+    model::Optimizer,
+    ::MOI.AbstractConstraintAttribute,
+    ::Type{MOI.ConstraintIndex{F,LazyScalarSet{S}}},
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    return false
+end
+
+function MOI.get(
+    model::Optimizer,
+    attr::MOI.AbstractConstraintAttribute,
+    ::MOI.ConstraintIndex{F,LazyScalarSet{S}},
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    msg = "This attribute is not supported for lazy constraints"
+    return throw(MOI.GetAttributeNotAllowed(attr, msg))
+end
+
+function MOI.set(
+    model::Optimizer,
+    attr::MOI.AbstractConstraintAttribute,
+    ::MOI.ConstraintIndex{F,LazyScalarSet{S}},
+    value::Any,
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    msg = "This attribute is not supported for lazy constraints"
+    return throw(MOI.SetAttributeNotAllowed(attr, msg))
 end
 
 ### MOI.optimize!
