@@ -200,10 +200,7 @@ end
 
 function MOI.set(
     model::Optimizer,
-    attr::Union{
-        MOI.AbstractConstraintAttribute,
-        MOI.AbstractVariableAttribute,
-    },
+    attr::Union{MOI.AbstractConstraintAttribute,MOI.AbstractVariableAttribute},
     indices::Vector,
     args::Vector,
 )
