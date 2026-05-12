@@ -68,6 +68,63 @@ function test_jump_direct_basics()
     return
 end
 
+function _basic_constraint_test_helper(
+    function_fn::Function,
+    set::MOI.AbstractScalarSet,
+)
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    config = MOI.Test.Config()
+    set = MathOptLazy.LazyScalarSet(set)
+    N = MOI.dimension(set)
+    x = MOI.add_variables(model, 3)
+    constraint_function = function_fn(x)
+    @assert MOI.output_dimension(constraint_function) == N
+    F, S = typeof(constraint_function), typeof(set)
+    @test MOI.supports_constraint(model, F, S)
+    @test MOI.get(model, MOI.NumberOfConstraints{F,S}()) == 0
+    c = MOI.add_constraint(model, constraint_function, set)
+    @test MOI.get(model, MOI.NumberOfConstraints{F,S}()) == 1
+    c_indices = MOI.get(model, MOI.ListOfConstraintIndices{F,S}())
+    @test c_indices == [c]
+    @test (F, S) in MOI.get(model, MOI.ListOfConstraintTypesPresent())
+    @test MOI.is_valid(model, c)
+    @test !MOI.is_valid(model, typeof(c)(c.value + 1)) isa Bool
+    @test !MOI.is_valid(model, typeof(c)(c.value - 1)) isa Bool
+    @test !MOI.is_valid(model, typeof(c)(c.value + 12345))
+    # Don't compare directly, because `f` might not be canonicalized.
+    f = MOI.get(model, MOI.ConstraintFunction(), c)
+    @test isapprox(f, constraint_function, config)
+    cf = MOI.get(model, MOI.CanonicalConstraintFunction(), c)
+    @test isapprox(cf, constraint_function, config)
+    @test MOI.get(model, MOI.ConstraintSet(), c) == set
+    MOI.add_constraints(
+        model,
+        [constraint_function, constraint_function],
+        [set, set],
+    )
+    @test MOI.get(model, MOI.NumberOfConstraints{F,S}()) == 3
+    @test length(MOI.get(model, MOI.ListOfConstraintIndices{F,S}())) == 3
+    c_indices = MOI.get(model, MOI.ListOfConstraintIndices{F,S}())
+    @test all(MOI.is_valid.(model, c_indices))
+    return
+end
+
+function test_basic_scalaraffinefunction_greaterthan()
+    _basic_constraint_test_helper(
+        x -> sum(sin(i) * x[i] for i in 1:length(x)),
+        MOI.GreaterThan(1.0)
+    )
+    return
+end
+
+function test_basic_scalaraffinefunction_lessthan()
+    _basic_constraint_test_helper(
+        x -> sum(sin(i) * x[i] for i in 1:length(x)),
+        MOI.LessThan(1.0)
+    )
+    return
+end
+
 end  # TestMathOptLazy
 
 TestMathOptLazy.runtests()
