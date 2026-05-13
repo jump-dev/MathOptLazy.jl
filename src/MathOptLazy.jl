@@ -82,23 +82,41 @@ Base.isempty(x::_LazyData) = isempty(x.data)
 ### Optimizer
 
 """
-    Optimizer(inner_fn; kwargs...)
+    Optimizer(inner_fn; kwargs...) <: MOI.AbstractOptimizer
+
+Construct a new optimizer that wraps the result of
+`MOI.instantiate(inner_fn; kwargs...)`.
+
+## Example
+
+```julia
+julia> import MathOptLazy
+
+julia> import HiGHS
+
+julia> model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+MathOptLazy.Optimizer{Float64, HiGHS.Optimizer}
+├ ObjectiveSense: FEASIBILITY_SENSE
+├ ObjectiveFunctionType: MOI.ScalarAffineFunction{Float64}
+├ NumberOfVariables: 0
+└ NumberOfConstraints: 0
+
+julia> model = MathOptLazy.Optimizer(HiGHS.Optimizer; with_bridge_type = Float64)
+MathOptLazy.Optimizer{Float64, MOIB.LazyBridgeOptimizer{HiGHS.Optimizer}}
+├ ObjectiveSense: FEASIBILITY_SENSE
+├ ObjectiveFunctionType: MOI.ScalarAffineFunction{Float64}
+├ NumberOfVariables: 0
+└ NumberOfConstraints: 0
+```
 """
-struct Optimizer{T,OT} <: MOI.AbstractOptimizer
+struct Optimizer{OT} <: MOI.AbstractOptimizer
     inner::OT
 
     lazy::Dict{Tuple{Type,Type},_LazyData}
 
-    function Optimizer(
-        inner_fn;
-        coefficient_type::Type{T} = Float64,
-        kwargs...,
-    ) where {T}
+    function Optimizer(inner_fn; kwargs...)
         inner = MOI.instantiate(inner_fn; kwargs...)
-        return new{T,typeof(inner)}(
-            inner,
-            Dict{Tuple{Type,Type},_LazyData}(),
-        )
+        return new{typeof(inner)}(inner, Dict{Tuple{Type,Type},_LazyData}())
     end
 end
 
@@ -139,7 +157,7 @@ function MOI.get(model::Optimizer, attr::_ATTRIBUTES, args...)
     return MOI.get(model.inner, attr, args...)
 end
 
-function MOI.get(model::Optimizer, attr::_ATTRIBUTES, arg::Vector{T}) where {T}
+function MOI.get(model::Optimizer, attr::_ATTRIBUTES, arg::Vector)
     return MOI.get.(model, attr, arg)
 end
 
@@ -326,10 +344,7 @@ function MOI.get(
     return LazyScalarSet(_data(model, F, S).data[ci.value][2])
 end
 
-function MOI.get(
-    model::Optimizer{T},
-    ::MOI.ListOfConstraintTypesPresent,
-) where {T}
+function MOI.get(model::Optimizer, ::MOI.ListOfConstraintTypesPresent)
     ret = MOI.get(model.inner, MOI.ListOfConstraintTypesPresent())
     for (F, S) in keys(model.lazy)
         push!(ret, (F, LazyScalarSet{S}))
@@ -389,17 +404,14 @@ end
 
 ### MOI.optimize!
 
-function MOI.optimize!(model::Optimizer{T}) where {T}
+function MOI.optimize!(model::Optimizer)
     needs_solve = true
     x = MOI.get(model, MOI.ListOfVariableIndices())
-    X = Dict{MOI.VariableIndex,T}(xi => zero(T) for xi in x)
     while needs_solve
         needs_solve = false
         MOI.optimize!(model.inner)
         if MOI.get(model, MOI.PrimalStatus()) == MOI.FEASIBLE_POINT
-            for xi in x
-                X[xi] = MOI.get(model, MOI.VariablePrimal(), xi)
-            end
+            X = Dict(xi => MOI.get(model, MOI.VariablePrimal(), xi) for xi in x)
             constraints_added = 0
             for v in values(model.lazy)
                 constraints_added += _add_if_necessary(model, v, X)
@@ -411,10 +423,10 @@ function MOI.optimize!(model::Optimizer{T}) where {T}
 end
 
 function _add_if_necessary(
-    model::Optimizer{T},
+    model::Optimizer,
     data::_LazyData,
-    x::Dict{MOI.VariableIndex,T},
-) where {T}
+    x::Dict{MOI.VariableIndex},
+)
     constraints_added = 0
     for (i, (f, s)) in enumerate(data.data)
         if data.active[i]
