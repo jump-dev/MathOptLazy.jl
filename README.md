@@ -39,10 +39,3 @@ model = Model(() -> MathOptLazy.Optimizer(HiGHS.Optimizer))
 @variable(model, x[1:10] >= 0)
 @constraint(model, [i in 1:10], x[i] <= 1, MathOptLazy.Lazy())
 ```
-
-## Supported constraints
-
-The following lazy constraint types are supported:
-
- * `MOI.ScalarAffineFunction`-in-`MOI.GreaterThan`
- * `MOI.ScalarAffineFunction`-in-`MOI.LessThan`
