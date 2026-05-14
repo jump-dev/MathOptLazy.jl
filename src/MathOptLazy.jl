@@ -75,32 +75,44 @@ struct _LazyData{F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
     end
 end
 
-Base.length(x::_LazyData) = length(x.data)
-
-Base.isempty(x::_LazyData) = isempty(x.data)
-
 ### Optimizer
 
 """
-    Optimizer(inner_fn; kwargs...)
+    Optimizer(inner_fn; kwargs...) <: MOI.AbstractOptimizer
+
+Construct a new optimizer that wraps the result of
+`MOI.instantiate(inner_fn; kwargs...)`.
+
+## Example
+
+```julia
+julia> import MathOptLazy
+
+julia> import HiGHS
+
+julia> model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+MathOptLazy.Optimizer{Float64, HiGHS.Optimizer}
+├ ObjectiveSense: FEASIBILITY_SENSE
+├ ObjectiveFunctionType: MOI.ScalarAffineFunction{Float64}
+├ NumberOfVariables: 0
+└ NumberOfConstraints: 0
+
+julia> model = MathOptLazy.Optimizer(HiGHS.Optimizer; with_bridge_type = Float64)
+MathOptLazy.Optimizer{Float64, MOIB.LazyBridgeOptimizer{HiGHS.Optimizer}}
+├ ObjectiveSense: FEASIBILITY_SENSE
+├ ObjectiveFunctionType: MOI.ScalarAffineFunction{Float64}
+├ NumberOfVariables: 0
+└ NumberOfConstraints: 0
+```
 """
-struct Optimizer{T,OT} <: MOI.AbstractOptimizer
+struct Optimizer{OT} <: MOI.AbstractOptimizer
     inner::OT
 
-    saf_gt::_LazyData{MOI.ScalarAffineFunction{T},MOI.GreaterThan{T}}
-    saf_lt::_LazyData{MOI.ScalarAffineFunction{T},MOI.LessThan{T}}
+    lazy::Dict{Tuple{Type,Type},_LazyData}
 
-    function Optimizer(
-        inner_fn;
-        coefficient_type::Type{T} = Float64,
-        kwargs...,
-    ) where {T}
+    function Optimizer(inner_fn; kwargs...)
         inner = MOI.instantiate(inner_fn; kwargs...)
-        return new{T,typeof(inner)}(
-            inner,
-            _LazyData{MOI.ScalarAffineFunction{T},MOI.GreaterThan{T}}(),
-            _LazyData{MOI.ScalarAffineFunction{T},MOI.LessThan{T}}(),
-        )
+        return new{typeof(inner)}(inner, Dict{Tuple{Type,Type},_LazyData}())
     end
 end
 
@@ -141,7 +153,7 @@ function MOI.get(model::Optimizer, attr::_ATTRIBUTES, args...)
     return MOI.get(model.inner, attr, args...)
 end
 
-function MOI.get(model::Optimizer, attr::_ATTRIBUTES, arg::Vector{T}) where {T}
+function MOI.get(model::Optimizer, attr::_ATTRIBUTES, arg::Vector)
     return MOI.get.(model, attr, arg)
 end
 
@@ -248,22 +260,16 @@ MOI.compute_conflict!(model::Optimizer) = MOI.compute_conflict!(model.inner)
 
 ### LazyConstraints
 
-_data(::Optimizer, ::Type{F}, ::Type{S}) where {F,S} = nothing
-
-function _data(
-    model::Optimizer{T},
-    ::Type{MOI.ScalarAffineFunction{T}},
-    ::Type{MOI.GreaterThan{T}},
-) where {T}
-    return model.saf_gt
+function _maybe_data(
+    model::Optimizer,
+    ::Type{F},
+    ::Type{S},
+)::Union{Nothing,_LazyData{F,S}} where {F,S}
+    return get(model.lazy, (F, S), nothing)
 end
 
-function _data(
-    model::Optimizer{T},
-    ::Type{MOI.ScalarAffineFunction{T}},
-    ::Type{MOI.LessThan{T}},
-) where {T}
-    return model.saf_lt
+function _data(model::Optimizer, ::Type{F}, ::Type{S}) where {F,S}
+    return get!(_LazyData{F,S}, model.lazy, (F, S))
 end
 
 function MOI.supports_constraint(
@@ -271,23 +277,22 @@ function MOI.supports_constraint(
     ::Type{F},
     ::Type{LazyScalarSet{S}},
 ) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
-    return _data(model, F, S) !== nothing &&
-           MOI.supports_constraint(model, F, S)
+    return MOI.supports_constraint(model, F, S)
 end
 
 function MOI.is_valid(
     model::Optimizer,
     ci::MOI.ConstraintIndex{F,LazyScalarSet{S}},
 ) where {F,S}
-    data = _data(model, F, S)
-    return data !== nothing && 1 <= ci.value <= length(data)
+    ret = _maybe_data(model, F, S)
+    return ret !== nothing && 1 <= ci.value <= length(ret.data)
 end
 
 function MOI.get(
     model::Optimizer,
     ::MOI.ListOfConstraintIndices{F,LazyScalarSet{S}},
 ) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
-    n = length(_data(model, F, S))
+    n = MOI.get(model, MOI.NumberOfConstraints{F,LazyScalarSet{S}}())
     return [MOI.ConstraintIndex{F,LazyScalarSet{S}}(i) for i in 1:n]
 end
 
@@ -295,7 +300,8 @@ function MOI.get(
     model::Optimizer,
     ::MOI.NumberOfConstraints{F,LazyScalarSet{S}},
 ) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
-    return length(_data(model, F, S))
+    ret = _maybe_data(model, F, S)
+    return ret === nothing ? 0 : length(ret.data)
 end
 
 function MOI.add_constraint(
@@ -307,7 +313,7 @@ function MOI.add_constraint(
     push!(data.data, (f, s.set))
     push!(data.active, false)
     push!(data.index, MOI.ConstraintIndex{F,S}(0))
-    return MOI.ConstraintIndex{F,LazyScalarSet{S}}(length(data))
+    return MOI.ConstraintIndex{F,LazyScalarSet{S}}(length(data.data))
 end
 
 function MOI.get(
@@ -334,22 +340,10 @@ function MOI.get(
     return LazyScalarSet(_data(model, F, S).data[ci.value][2])
 end
 
-function MOI.get(
-    model::Optimizer{T},
-    ::MOI.ListOfConstraintTypesPresent,
-) where {T}
+function MOI.get(model::Optimizer, ::MOI.ListOfConstraintTypesPresent)
     ret = MOI.get(model.inner, MOI.ListOfConstraintTypesPresent())
-    if !isempty(model.saf_gt)
-        push!(
-            ret,
-            (MOI.ScalarAffineFunction{T}, LazyScalarSet{MOI.GreaterThan{T}}),
-        )
-    end
-    if !isempty(model.saf_lt)
-        push!(
-            ret,
-            (MOI.ScalarAffineFunction{T}, LazyScalarSet{MOI.LessThan{T}}),
-        )
+    for (F, S) in keys(model.lazy)
+        push!(ret, (F, LazyScalarSet{S}))
     end
     return ret
 end
@@ -359,8 +353,8 @@ function MOI.get(
     attr::MOI.NumberOfConstraints{F,S},
 ) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
     n = MOI.get(model.inner, attr)
-    if (data = _data(model, F, S)) !== nothing
-        n -= sum(data.active)
+    if (data = _maybe_data(model, F, S)) !== nothing
+        n -= sum((data).active)
     end
     return n
 end
@@ -406,20 +400,18 @@ end
 
 ### MOI.optimize!
 
-function MOI.optimize!(model::Optimizer{T}) where {T}
+function MOI.optimize!(model::Optimizer)
     needs_solve = true
     x = MOI.get(model, MOI.ListOfVariableIndices())
-    X = Dict{MOI.VariableIndex,T}(xi => zero(T) for xi in x)
     while needs_solve
         needs_solve = false
         MOI.optimize!(model.inner)
         if MOI.get(model, MOI.PrimalStatus()) == MOI.FEASIBLE_POINT
-            for xi in x
-                X[xi] = MOI.get(model, MOI.VariablePrimal(), xi)
+            X = Dict(xi => MOI.get(model, MOI.VariablePrimal(), xi) for xi in x)
+            constraints_added = 0
+            for v in values(model.lazy)
+                constraints_added += _add_if_necessary(model, v, X)
             end
-            constraints_added =
-                _add_if_necessary(model, model.saf_gt, X) +
-                _add_if_necessary(model, model.saf_lt, X)
             needs_solve = constraints_added > 0
         end
     end
@@ -427,10 +419,10 @@ function MOI.optimize!(model::Optimizer{T}) where {T}
 end
 
 function _add_if_necessary(
-    model::Optimizer{T},
+    model::Optimizer,
     data::_LazyData,
-    x::Dict{MOI.VariableIndex,T},
-) where {T}
+    x::Dict{MOI.VariableIndex},
+)
     constraints_added = 0
     for (i, (f, s)) in enumerate(data.data)
         if data.active[i]
