@@ -400,9 +400,17 @@ end
 
 ### MOI.optimize!
 
+function _get_start(model, x)
+    if !MOI.supports(model, MOI.VariablePrimalStart(), MOI.VariableIndex)
+        return nothing
+    end
+    return Dict(xi => MOI.get(model, MOI.VariablePrimalStart(), xi) for xi in x)
+end
+
 function MOI.optimize!(model::Optimizer)
     needs_solve = true
     x = MOI.get(model, MOI.ListOfVariableIndices())
+    start = _get_start(model, x)
     while needs_solve
         needs_solve = false
         MOI.optimize!(model.inner)
@@ -413,6 +421,16 @@ function MOI.optimize!(model::Optimizer)
                 constraints_added += _add_if_necessary(model, v, X)
             end
             needs_solve = constraints_added > 0
+            if start !== nothing
+                for (xi, v) in X
+                    MOI.set(model, MOI.VariablePrimalStart(), xi, v)
+                end
+            end
+        end
+    end
+    if start !== nothing
+        for (xi, v) in start
+            MOI.set(model, MOI.VariablePrimalStart(), xi, v)
         end
     end
     return
