@@ -3,9 +3,9 @@
 [![Build Status](https://github.com/jump-dev/MathOptLazy.jl/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jump-dev/MathOptLazy.jl/actions?query=workflow%3ACI)
 [![codecov](https://codecov.io/gh/jump-dev/MathOptLazy.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/jump-dev/MathOptLazy.jl)
 
-!!! [!warning]
-    This package is not registered and it is under active development. Breaking
-    changes may occur at any time.
+> [!warning]
+> This package is not registered and it is under active development. Breaking
+> changes may occur at any time.
 
 [MathOptLazy.jl](https://github.com/jump-dev/MathOptLazy.jl) is an experimental meta-solver for problems with lazy constraints.
 
