@@ -75,10 +75,6 @@ struct _LazyData{F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
     end
 end
 
-Base.length(x::_LazyData) = length(x.data)
-
-Base.isempty(x::_LazyData) = isempty(x.data)
-
 ### Optimizer
 
 """
@@ -289,7 +285,7 @@ function MOI.is_valid(
     ci::MOI.ConstraintIndex{F,LazyScalarSet{S}},
 ) where {F,S}
     ret = _maybe_data(model, F, S)
-    return ret !== nothing && 1 <= ci.value <= length(ret)
+    return ret !== nothing && 1 <= ci.value <= length(ret.data)
 end
 
 function MOI.get(
@@ -305,7 +301,7 @@ function MOI.get(
     ::MOI.NumberOfConstraints{F,LazyScalarSet{S}},
 ) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
     ret = _maybe_data(model, F, S)
-    return ret === nothing ? 0 : length(ret)
+    return ret === nothing ? 0 : length(ret.data)
 end
 
 function MOI.add_constraint(
@@ -317,7 +313,7 @@ function MOI.add_constraint(
     push!(data.data, (f, s.set))
     push!(data.active, false)
     push!(data.index, MOI.ConstraintIndex{F,S}(0))
-    return MOI.ConstraintIndex{F,LazyScalarSet{S}}(length(data))
+    return MOI.ConstraintIndex{F,LazyScalarSet{S}}(length(data.data))
 end
 
 function MOI.get(
