@@ -174,6 +174,35 @@ function test_writing_mof_file()
     return
 end
 
+function test_lazy_bounds()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variable(model)
+    set = MathOptLazy.LazyScalarSet(MOI.GreaterThan(0.0))
+    MOI.add_constraint(model, x, set)
+    MOI.set(model, MOI.ObjectiveSense(), MOI.MIN_SENSE)
+    f = 1.0 * x
+    MOI.set(model, MOI.ObjectiveFunction{typeof(f)}(), f)
+    MOI.optimize!(model)
+    @test MOI.get(model, MOI.TerminationStatus()) == MOI.OPTIMAL
+    @test MOI.get(model, MOI.VariablePrimal(), x) == 0.0
+    return
+end
+
+function test_lazy_bounds_knapsack()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variables(model, 22)
+    set = MathOptLazy.LazyScalarSet(MOI.GreaterThan(0.0))
+    MOI.add_constraint.(model, x, set)
+    set = MathOptLazy.LazyScalarSet(MOI.LessThan(1.0))
+    MOI.add_constraint.(model, x, set)
+    MOI.set(model, MOI.ObjectiveSense(), MOI.MAX_SENSE)
+    f = rand(22)' * x
+    MOI.set(model, MOI.ObjectiveFunction{typeof(f)}(), f)
+    MOI.optimize!(model)
+    @test MOI.get(model, MOI.TerminationStatus()) == MOI.OPTIMAL
+    return
+end
+
 end  # TestMathOptLazy
 
 TestMathOptLazy.runtests()

@@ -421,13 +421,17 @@ function MOI.optimize!(model::Optimizer)
     while needs_solve
         needs_solve = false
         MOI.optimize!(model.inner)
-        if MOI.get(model, MOI.PrimalStatus()) == MOI.FEASIBLE_POINT
-            X = Dict(xi => MOI.get(model, MOI.VariablePrimal(), xi) for xi in x)
-            constraints_added = 0
+        if MOI.get(model, MOI.TerminationStatus()) == MOI.DUAL_INFEASIBLE
+            # The problem is unbounded, but it might not be if we add more
+            # constraints.
             for v in values(model.lazy)
-                constraints_added += _add_if_necessary(model, v, X)
+                needs_solve |= _add_if_unbounded(model, v)
             end
-            needs_solve = constraints_added > 0
+        elseif MOI.get(model, MOI.PrimalStatus()) == MOI.FEASIBLE_POINT
+            X = Dict(xi => MOI.get(model, MOI.VariablePrimal(), xi) for xi in x)
+            for v in values(model.lazy)
+                needs_solve |= _add_if_feasible(model, v, X)
+            end
             if start && needs_solve
                 for (xi, v) in X
                     MOI.set(model, MOI.VariablePrimalStart(), xi, v)
@@ -438,12 +442,31 @@ function MOI.optimize!(model::Optimizer)
     return
 end
 
-function _add_if_necessary(
+function _add_if_unbounded(model::Optimizer, data::_LazyData)
+    # Strategy: add 1/3 of the total constraints. This is arbitrary. If a model
+    # is unbounded with lazy constraints, it's not a great model, and it has a
+    # high likelihood that it requires _all_ the constraints to be added. I'm
+    # imagining something like 0 <= x <= Lazy(1) in a knapsack problem.
+    n = div(length(data.data), 3, RoundUp)
+    constraints_added = 0
+    for (i, (f, s)) in enumerate(data.data)
+        if constraints_added >= n
+            break
+        elseif !data.active[i]
+            data.index[i] = MOI.add_constraint(model.inner, f, s)
+            data.active[i] = true
+            constraints_added += 1
+        end
+    end
+    return constraints_added > 0
+end
+
+function _add_if_feasible(
     model::Optimizer,
     data::_LazyData,
     x::Dict{MOI.VariableIndex},
 )
-    constraints_added = 0
+    needs_solve = false
     for (i, (f, s)) in enumerate(data.data)
         if data.active[i]
             continue
@@ -452,10 +475,10 @@ function _add_if_necessary(
         if MOI.Utilities.distance_to_set(y, s) > 0
             data.index[i] = MOI.add_constraint(model.inner, f, s)
             data.active[i] = true
-            constraints_added += 1
+            needs_solve = true
         end
     end
-    return constraints_added
+    return needs_solve
 end
 
 end # module MathOptLazy
