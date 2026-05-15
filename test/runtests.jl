@@ -162,6 +162,18 @@ function test_basic_scalaraffinefunction_lessthan()
     return
 end
 
+function test_writing_mof_file()
+    src = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variable(src)
+    c = MOI.add_constraint(src, x, MathOptLazy.LazyScalarSet(MOI.ZeroOne()))
+    dest = MOI.FileFormats.MOF.Model()
+    _ = MOI.copy_to(dest, src)
+    contents = sprint(write, dest)
+    @test occursin("ZeroOne", contents)
+    @test !occursin("LazyScalarSet", contents)
+    return
+end
+
 end  # TestMathOptLazy
 
 TestMathOptLazy.runtests()
