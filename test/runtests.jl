@@ -8,6 +8,7 @@ module TestMathOptLazy
 using JuMP
 using Test
 
+import GLPK
 import HiGHS
 import MathOptInterface as MOI
 import MathOptLazy
@@ -200,6 +201,27 @@ function test_lazy_bounds_knapsack()
     MOI.set(model, MOI.ObjectiveFunction{typeof(f)}(), f)
     MOI.optimize!(model)
     @test MOI.get(model, MOI.TerminationStatus()) == MOI.OPTIMAL
+    return
+end
+
+function test_jump_glpk_callback()
+    N = 10
+    model = Model(() -> MathOptLazy.Optimizer(GLPK.Optimizer))
+    opt = unsafe_backend(model)
+    @test MOI.supports(opt, MathOptLazy.Algorithm())
+    @test MOI.get(opt, MathOptLazy.Algorithm()) == MathOptLazy.Iterative()
+    set_attribute(model, MathOptLazy.Algorithm(), MathOptLazy.Callback())
+    @test MOI.get(opt, MathOptLazy.Algorithm()) == MathOptLazy.Callback()
+    set_silent(model)
+    @variable(model, x[1:N] >= 0, Int)
+    @constraint(model, c[i in 1:N], x[i] <= 1, MathOptLazy.Lazy())
+    @test endswith(sprint(show, c[1]), " [lazy]")
+    @constraint(model, sum(abs(cos(i)) * x[i] for i in 1:N) <= 0.1 * N)
+    @objective(model, Max, sum(abs(sin(i)) * x[i] for i in 1:N))
+    optimize!(model)
+    @test termination_status(model) == OPTIMAL
+    @test primal_status(model) == FEASIBLE_POINT
+    @test all(<=(1 + 1e-6), value(x))
     return
 end
 
