@@ -544,8 +544,7 @@ function _optimize!(model::Optimizer, ::Callback)
     function callback(cb_data)
         x = MOI.get(model, MOI.ListOfVariableIndices())
         X = Dict(
-            xi => MOI.get(model.inner, MOI.CallbackVariablePrimal(cb_data), xi)
-            for xi in x
+            xi => MOI.get(model.inner, MOI.CallbackVariablePrimal(cb_data), xi) for xi in x
         )
         # We don't check `.is_active` in this loop because callbacks are weird.
         # In some solvers, callbacks may be called at a point that was
@@ -554,7 +553,11 @@ function _optimize!(model::Optimizer, ::Callback)
         # no new cuts.
         for data in values(model.lazy)
             for (i, (f, s)) in enumerate(data.data)
-                y = MOI.Utilities.eval_variables(Base.Fix1(getindex, X), model.inner, f)
+                y = MOI.Utilities.eval_variables(
+                    Base.Fix1(getindex, X),
+                    model.inner,
+                    f,
+                )
                 if MOI.Utilities.distance_to_set(y, s) > 0
                     MOI.submit(model.inner, MOI.LazyConstraint(cb_data), f, s)
                 end
