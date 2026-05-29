@@ -35,3 +35,14 @@ model = Model(() -> MathOptLazy.Optimizer(HiGHS.Optimizer))
 @variable(model, x[1:10] >= 0)
 @constraint(model, [i in 1:10], x[i] <= 1, MathOptLazy.Lazy())
 ```
+
+## Algorithm
+
+Control the algorithm used to handle the lazy constraints by setting the
+`MathOptLazy.Algorithm` attribute. See the docstring for details. The supoprted
+values are:
+
+ * `MathOptLazy.Iterative()` [default]
+ * `MathOptLazy.Callback()`
+
+See their docstrings for details.

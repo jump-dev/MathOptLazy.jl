@@ -82,6 +82,46 @@ struct _LazyData{F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
     end
 end
 
+### Algorithm
+
+"""
+    Algorithm() <: MOI.AbstractOptimizerAttribute
+
+An `MOI.AbstractOptimizerAttribute` to control which algorithm we use to solve
+the lazy constraints.
+
+Supported values are
+
+ * `Iterative()` [default]
+ * `Callback()`
+"""
+struct Algorithm <: MOI.AbstractOptimizerAttribute end
+
+abstract type AbstractAlgorithm end
+
+"""
+    Iterative()
+
+This algorithm iteratively solves a sequence of problems that iteratively add
+violated lazy constraints to the main problem.
+
+This algorithm works for all problem types, including continuous problems with
+no discrete variables. The downside is that it may not re-use information
+between solves.
+"""
+struct Iterative <: AbstractAlgorithm end
+
+"""
+    Callback()
+
+This algorithm uses a `MOI.LazyConstraintCallback` to add violated laz
+ constraints to the main problem.
+
+This algorithm works only for problems with discrete variables and only if the
+solver supports `MOI.LazyConstraintCallback`.
+"""
+struct Callback <: AbstractAlgorithm end
+
 ### Optimizer
 
 """
@@ -112,16 +152,33 @@ MathOptLazy.Optimizer{Float64, MOIB.LazyBridgeOptimizer{HiGHS.Optimizer}}
 └ NumberOfConstraints: 0
 ```
 """
-struct Optimizer{OT} <: MOI.AbstractOptimizer
+mutable struct Optimizer{OT<:MOI.ModelLike} <: MOI.AbstractOptimizer
     inner::OT
-
+    algorithm::AbstractAlgorithm
     lazy::Dict{Tuple{Type,Type},_LazyData}
 
     function Optimizer(inner_fn; kwargs...)
         inner = MOI.instantiate(inner_fn; kwargs...)
-        return new{typeof(inner)}(inner, Dict{Tuple{Type,Type},_LazyData}())
+        return new{typeof(inner)}(
+            inner,
+            Iterative(),
+            Dict{Tuple{Type,Type},_LazyData}(),
+        )
     end
 end
+
+### Algorithm
+
+MOI.supports(::Optimizer, ::Algorithm) = true
+
+MOI.get(model::Optimizer, ::Algorithm) = model.algorithm
+
+function MOI.set(model::Optimizer, ::Algorithm, value::AbstractAlgorithm)
+    model.algorithm = value
+    return
+end
+
+MOI.Utilities.map_indices(::Function, algorithm::AbstractAlgorithm) = algorithm
 
 ### Fallbacks
 
@@ -407,7 +464,9 @@ end
 
 ### MOI.optimize!
 
-function MOI.optimize!(model::Optimizer)
+MOI.optimize!(model::Optimizer) = _optimize!(model, model.algorithm)
+
+function _optimize!(model::Optimizer, ::Iterative)
     needs_solve = true
     x = MOI.get(model, MOI.ListOfVariableIndices())
     # TODO(odow): if the solver supports VariablePrimalStart, we will update the
@@ -479,6 +538,36 @@ function _add_if_feasible(
         end
     end
     return needs_solve
+end
+
+function _optimize!(model::Optimizer, ::Callback)
+    function callback(cb_data)
+        x = MOI.get(model, MOI.ListOfVariableIndices())
+        X = Dict(
+            xi => MOI.get(model.inner, MOI.CallbackVariablePrimal(cb_data), xi) for xi in x
+        )
+        # We don't check `.is_active` in this loop because callbacks are weird.
+        # In some solvers, callbacks may be called at a point that was
+        # previously cut off because the added cut was later removed. The only
+        # guarantee is that the solver won't terminate until this loop produces
+        # no new cuts.
+        for data in values(model.lazy)
+            for (i, (f, s)) in enumerate(data.data)
+                y = MOI.Utilities.eval_variables(
+                    Base.Fix1(getindex, X),
+                    model.inner,
+                    f,
+                )
+                if MOI.Utilities.distance_to_set(y, s) > 0
+                    MOI.submit(model.inner, MOI.LazyConstraint(cb_data), f, s)
+                end
+            end
+        end
+        return
+    end
+    MOI.set(model.inner, MOI.LazyConstraintCallback(), callback)
+    MOI.optimize!(model.inner)
+    return
 end
 
 end # module MathOptLazy
