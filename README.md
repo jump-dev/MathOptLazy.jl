@@ -32,6 +32,7 @@ using JuMP
 import HiGHS
 import MathOptLazy
 model = Model(() -> MathOptLazy.Optimizer(HiGHS.Optimizer))
+set_attribute(model, MathOptLazy.Algorithm(), MathOptLazy.Iterative())
 @variable(model, x[1:10] >= 0)
 @constraint(model, [i in 1:10], x[i] <= 1, MathOptLazy.Lazy())
 ```
@@ -44,5 +45,6 @@ values are:
 
  * `MathOptLazy.Iterative()` [default]
  * `MathOptLazy.Callback()`
+ * `MathOptLazy.SolverSpecific()`
 
 See their docstrings for details.

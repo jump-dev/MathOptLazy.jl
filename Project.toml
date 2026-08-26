@@ -7,12 +7,15 @@ authors = ["Oscar Dowson <o.dowson@gmail.com>"]
 MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
 
 [weakdeps]
+Gurobi = "2e9cd046-0924-5485-92f1-d5272153d98b"
 JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
 
 [extensions]
+MathOptLazyGurobiExt = "Gurobi"
 MathOptLazyJuMPExt = "JuMP"
 
 [compat]
+Gurobi = "1"
 JuMP = "1"
 MathOptInterface = "1"
 julia = "1.10"
