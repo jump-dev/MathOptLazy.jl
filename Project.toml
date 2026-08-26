@@ -1,6 +1,6 @@
 name = "MathOptLazy"
 uuid = "5d5fe9b5-b0a4-4485-81f6-7b1b939155e1"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Oscar Dowson <o.dowson@gmail.com>"]
 
 [deps]
