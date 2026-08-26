@@ -94,6 +94,7 @@ Supported values are
 
  * `Iterative()` [default]
  * `Callback()`
+ * `SolverSpecific()`
 """
 struct Algorithm <: MOI.AbstractOptimizerAttribute end
 
@@ -114,13 +115,24 @@ struct Iterative <: AbstractAlgorithm end
 """
     Callback()
 
-This algorithm uses a `MOI.LazyConstraintCallback` to add violated laz
- constraints to the main problem.
+This algorithm uses a `MOI.LazyConstraintCallback` to add violated lazy
+constraints to the main problem.
 
 This algorithm works only for problems with discrete variables and only if the
 solver supports `MOI.LazyConstraintCallback`.
 """
 struct Callback <: AbstractAlgorithm end
+
+"""
+    SolverSpecific()
+
+This algorithm uses a solver-specific extension to add lazy constraints.
+
+The following solvers are supported:
+
+ * `Gurobi.jl`
+"""
+struct SolverSpecific <: AbstractAlgorithm end
 
 ### Optimizer
 
@@ -568,6 +580,32 @@ function _optimize!(model::Optimizer, ::Callback)
     MOI.set(model.inner, MOI.LazyConstraintCallback(), callback)
     MOI.optimize!(model.inner)
     return
+end
+
+function _optimize!(model::Optimizer{T}, ::SolverSpecific) where {T}
+    return error(
+        """
+        The `SolverSpecific` algorithm is not supported by the current solver.
+
+        The current solver type is: `$T`
+
+        The supported solvers are:
+
+         * `Gurobi.Optimizer`
+
+        ## Example
+
+        ```julia
+        import Gurobi
+        import MathOptInterface as MOI
+        import MathOptLazy
+        optimizer = MOI.OptimizerWithAttributes(
+            () -> MathOptLazy.Optimizer(Gurobi.Optimizer),
+            MathOptLazy.Algorithm() => MathOptLazy.SolverSpecific(),
+        )
+        ```
+        """,
+    )
 end
 
 end # module MathOptLazy

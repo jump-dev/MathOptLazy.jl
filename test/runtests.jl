@@ -9,6 +9,7 @@ using JuMP
 using Test
 
 import GLPK
+import Gurobi
 import HiGHS
 import MathOptInterface as MOI
 import MathOptLazy
@@ -62,6 +63,7 @@ end
 
 function test_jump_broadcast()
     model = Model(() -> MathOptLazy.Optimizer(HiGHS.Optimizer))
+    set_silent(model)
     @variable(model, x[1:3])
     c = @constraint(model, x .<= 1:3, MathOptLazy.Lazy())
     @test c isa Vector && length(c) == 3
@@ -74,6 +76,7 @@ end
 
 function test_jump_direct_basics()
     model = direct_model(MathOptLazy.Optimizer(HiGHS.Optimizer))
+    set_silent(model)
     @variable(model, x)
     c = @constraint(model, x <= 1, MathOptLazy.Lazy())
     o = constraint_object(c)
@@ -88,6 +91,7 @@ function _basic_constraint_test_helper(
     activate::Bool,
 )
     model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    MOI.set(model, MOI.Silent(), true)
     config = MOI.Test.Config()
     set = MathOptLazy.LazyScalarSet(inner_set)
     N = MOI.dimension(set)
@@ -165,6 +169,7 @@ end
 
 function test_writing_mof_file()
     src = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    MOI.set(src, MOI.Silent(), true)
     x = MOI.add_variable(src)
     c = MOI.add_constraint(src, x, MathOptLazy.LazyScalarSet(MOI.ZeroOne()))
     dest = MOI.FileFormats.MOF.Model()
@@ -177,6 +182,7 @@ end
 
 function test_lazy_bounds()
     model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    MOI.set(model, MOI.Silent(), true)
     x = MOI.add_variable(model)
     set = MathOptLazy.LazyScalarSet(MOI.GreaterThan(0.0))
     MOI.add_constraint(model, x, set)
@@ -191,6 +197,7 @@ end
 
 function test_lazy_bounds_knapsack()
     model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    MOI.set(model, MOI.Silent(), true)
     x = MOI.add_variables(model, 22)
     set = MathOptLazy.LazyScalarSet(MOI.GreaterThan(0.0))
     MOI.add_constraint.(model, x, set)
@@ -222,6 +229,84 @@ function test_jump_glpk_callback()
     @test termination_status(model) == OPTIMAL
     @test primal_status(model) == FEASIBLE_POINT
     @test all(<=(1 + 1e-6), value(x))
+    return
+end
+
+function test_gurobi_solver_specific()
+    N = 10
+    model = MathOptLazy.Optimizer(Gurobi.Optimizer)
+    MOI.set(model, MathOptLazy.Algorithm(), MathOptLazy.SolverSpecific())
+    MOI.set(model, MOI.Silent(), true)
+    x = MOI.add_variables(model, N)
+    MOI.add_constraint.(model, x, MOI.Integer())
+    MOI.add_constraint.(model, x, MOI.GreaterThan(0.0))
+    MOI.add_constraint.(
+        model,
+        1.0 .* x,
+        MathOptLazy.LazyScalarSet(MOI.LessThan(1.0)),
+    )
+    MOI.add_constraint(
+        model,
+        sum(abs(cos(i)) * x[i] for i in 1:N),
+        MOI.LessThan(0.1 * N),
+    )
+    MOI.set(model, MOI.ObjectiveSense(), MOI.MAX_SENSE)
+    f = sum(abs(sin(i)) * x[i] for i in 1:N)
+    MOI.set(model, MOI.ObjectiveFunction{typeof(f)}(), f)
+    MOI.optimize!(model)
+    @test MOI.get(model, MOI.TerminationStatus()) == MOI.OPTIMAL
+    @test MOI.get(model, MOI.PrimalStatus()) == MOI.FEASIBLE_POINT
+    @test all(<=(1 + 1e-6), MOI.get(model, MOI.VariablePrimal(), x))
+    return
+end
+
+function test_glpk_solver_specific()
+    N = 10
+    model = MathOptLazy.Optimizer(GLPK.Optimizer)
+    MOI.set(model, MathOptLazy.Algorithm(), MathOptLazy.SolverSpecific())
+    MOI.set(model, MOI.Silent(), true)
+    x = MOI.add_variables(model, N)
+    MOI.add_constraint.(model, x, MOI.Integer())
+    MOI.add_constraint.(model, x, MOI.GreaterThan(0.0))
+    MOI.add_constraint.(
+        model,
+        1.0 .* x,
+        MathOptLazy.LazyScalarSet(MOI.LessThan(1.0)),
+    )
+    MOI.add_constraint(
+        model,
+        sum(abs(cos(i)) * x[i] for i in 1:N),
+        MOI.LessThan(0.1 * N),
+    )
+    MOI.set(model, MOI.ObjectiveSense(), MOI.MAX_SENSE)
+    f = sum(abs(sin(i)) * x[i] for i in 1:N)
+    MOI.set(model, MOI.ObjectiveFunction{typeof(f)}(), f)
+    @test_throws(
+        ErrorException(
+            """
+            The `SolverSpecific` algorithm is not supported by the current solver.
+
+            The current solver type is: `$(GLPK.Optimizer)`
+
+            The supported solvers are:
+
+             * `Gurobi.Optimizer`
+
+            ## Example
+
+            ```julia
+            import Gurobi
+            import MathOptInterface as MOI
+            import MathOptLazy
+            optimizer = MOI.OptimizerWithAttributes(
+                () -> MathOptLazy.Optimizer(Gurobi.Optimizer),
+                MathOptLazy.Algorithm() => MathOptLazy.SolverSpecific(),
+            )
+            ```
+            """,
+        ),
+        MOI.optimize!(model),
+    )
     return
 end
 
