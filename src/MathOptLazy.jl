@@ -440,7 +440,7 @@ function MOI.get(
     attr::MOI.ListOfConstraintIndices{F,S},
 ) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
     ret = MOI.get(model.inner, attr)
-    if (data = _data(model, F, S)) !== nothing
+    if (data = _maybe_data(model, F, S)) !== nothing
         in_model = Set(ci for (ci, z) in zip(data.index, data.active) if z)
         ret = filter!(ci -> !(ci in in_model), ret)
     end

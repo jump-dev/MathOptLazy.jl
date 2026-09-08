@@ -101,6 +101,9 @@ function _basic_constraint_test_helper(
     F, S, IS = typeof(constraint_function), typeof(set), typeof(inner_set)
     @test MOI.supports_constraint(model, F, S)
     @test MOI.get(model, MOI.NumberOfConstraints{F,S}()) == 0
+    @test isempty(MOI.get(model, MOI.ListOfConstraintIndices{F,S}()))
+    @test MOI.get(model, MOI.NumberOfConstraints{F,IS}()) == 0
+    @test isempty(MOI.get(model, MOI.ListOfConstraintIndices{F,IS}()))
     c = MOI.add_constraint(model, constraint_function, set)
     if activate
         data = MathOptLazy._data(model, F, IS)
