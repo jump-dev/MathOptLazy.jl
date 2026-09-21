@@ -179,7 +179,7 @@ function test_writing_mof_file()
     _ = MOI.copy_to(dest, src)
     contents = sprint(write, dest)
     @test occursin("ZeroOne", contents)
-    @test !occursin("LazyScalarSet", contents)
+    @test occursin("LazyScalarSet", contents)
     return
 end
 

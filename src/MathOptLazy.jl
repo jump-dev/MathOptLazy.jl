@@ -23,11 +23,13 @@ function MOI.Utilities.shift_constant(set::LazyScalarSet, constant)
     return LazyScalarSet(MOI.Utilities.shift_constant(set.set, constant))
 end
 
+# This doesn't fit the Schema, but we do it anyway.
 function MOI.FileFormats.MOF.moi_to_object(
     set::LazyScalarSet,
     x::Dict{MOI.VariableIndex,String},
 )
-    return MOI.FileFormats.MOF.moi_to_object(set.set, x)
+    inner_set = MOI.FileFormats.MOF.moi_to_object(set.set, x)
+    return (; type = "LazyScalarSet", set = inner_set)
 end
 
 """
