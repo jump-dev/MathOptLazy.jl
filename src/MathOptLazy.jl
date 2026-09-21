@@ -209,11 +209,12 @@ MOI.Utilities.map_indices(::Function, algorithm::AbstractAlgorithm) = algorithm
 
 function MOI.empty!(model::Optimizer)
     MOI.empty!(model.inner)
+    empty!(model.lazy)
     return
 end
 
 function MOI.is_empty(model::Optimizer)
-    return MOI.is_empty(model.inner)
+    return MOI.is_empty(model.inner) && isempty(model.lazy)
 end
 
 MOI.supports_incremental_interface(::Optimizer) = true

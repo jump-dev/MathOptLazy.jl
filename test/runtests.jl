@@ -353,6 +353,21 @@ function test_delete_lazy_active()
     return
 end
 
+function test_empty()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variable(model)
+    set = MathOptLazy.LazyScalarSet(MOI.EqualTo(1.0))
+    c = MOI.add_constraint(model, 1.0 * x, set)
+    @test !MOI.is_empty(model)
+    @test !MOI.is_empty(model.inner)
+    @test !isempty(model.lazy)
+    MOI.empty!(model)
+    @test MOI.is_empty(model)
+    @test MOI.is_empty(model.inner)
+    @test isempty(model.lazy)
+    return
+end
+
 function test_is_valid()
     model = MathOptLazy.Optimizer(HiGHS.Optimizer)
     x = MOI.add_variable(model)
