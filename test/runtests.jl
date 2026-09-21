@@ -353,6 +353,21 @@ function test_delete_lazy_active()
     return
 end
 
+function test_is_valid()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variable(model)
+    set = MathOptLazy.LazyScalarSet(MOI.EqualTo(1.0))
+    c = MOI.add_constraint(model, 1.0 * x, set)
+    @test !MOI.is_valid(model, typeof(c)(c.value - 1))
+    @test MOI.is_valid(model, c)
+    @test !MOI.is_valid(model, typeof(c)(c.value + 1))
+    F, S = MOI.VariableIndex, MathOptLazy.LazyScalarSet{MOI.ZeroOne}
+    @test !MOI.is_valid(model, MOI.ConstraintIndex{F,S}(-1))
+    @test !MOI.is_valid(model, MOI.ConstraintIndex{F,S}(0))
+    @test !MOI.is_valid(model, MOI.ConstraintIndex{F,S}(1))
+    return
+end
+
 end  # TestMathOptLazy
 
 TestMathOptLazy.runtests()
