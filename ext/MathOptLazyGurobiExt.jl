@@ -14,10 +14,10 @@ function _add_constraints!(
     data::MathOptLazy._LazyData,
 )
     for (i, (f, s)) in enumerate(data.data)
-        if !data.active[i]
+        if data.status[i] == MathOptLazy._kLAZY_CONSTRAINT_INACTIVE
             c = data.index[i] = MOI.add_constraint(model.inner, f, s)
             MOI.set(model.inner, Gurobi.ConstraintAttribute("Lazy"), c, 1)
-            data.active[i] = true
+            data.status[i] = MathOptLazy._kLAZY_CONSTRAINT_ACTIVE
         end
     end
     return
