@@ -368,6 +368,21 @@ function test_is_valid()
     return
 end
 
+function test_list_of_constraint_attributes_set()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variables(model, 2)
+    set = MathOptLazy.LazyScalarSet(MOI.EqualTo(1.0))
+    c = MOI.add_constraint(model, 1.0 * x[1], set)
+    d = MOI.add_constraint(model, 1.0 * x[2], MOI.EqualTo(2.0))
+    MOI.set(model, MOI.ConstraintName(), d, "d")
+    F, S = MOI.ScalarAffineFunction{Float64}, MOI.EqualTo{Float64}
+    LS = MathOptLazy.LazyScalarSet{S}
+    @test MOI.get(model, MOI.ListOfConstraintAttributesSet{F,S}()) ==
+          [MOI.ConstraintName()]
+    @test isempty(MOI.get(model, MOI.ListOfConstraintAttributesSet{F,LS}()))
+    return
+end
+
 end  # TestMathOptLazy
 
 TestMathOptLazy.runtests()
