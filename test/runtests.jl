@@ -109,7 +109,7 @@ function _basic_constraint_test_helper(
         data = MathOptLazy._data(model, F, IS)
         for (i, (f, s)) in enumerate(data.data)
             data.index[i] = MOI.add_constraint(model.inner, f, s)
-            data.active[i] = true
+            data.status[i] = MathOptLazy._kLAZY_CONSTRAINT_ACTIVE
         end
     end
     c_inner = MOI.add_constraint(model, constraint_function, inner_set)
@@ -310,6 +310,61 @@ function test_glpk_solver_specific()
         ),
         MOI.optimize!(model),
     )
+    return
+end
+
+function test_delete_bound()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variable(model)
+    c1 = MOI.add_constraint(model, x, MOI.ZeroOne())
+    @test MOI.is_valid(model, c1)
+    MOI.delete(model, c1)
+    @test !MOI.is_valid(model, c1)
+    return
+end
+
+function test_delete_lazy_inactive()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    MOI.set(model, MOI.Silent(), true)
+    x = MOI.add_variable(model)
+    MOI.add_constraint(model, x, MOI.EqualTo(0.0))
+    set = MathOptLazy.LazyScalarSet(MOI.EqualTo(1.0))
+    c = MOI.add_constraint(model, 1.0 * x, set)
+    @test MOI.is_valid(model, c)
+    MOI.delete(model, c)
+    @test !MOI.is_valid(model, c)
+    MOI.optimize!(model)
+    @test MOI.get(model, MOI.TerminationStatus()) == MOI.OPTIMAL
+    return
+end
+
+function test_delete_lazy_active()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    MOI.set(model, MOI.Silent(), true)
+    x = MOI.add_variable(model)
+    MOI.add_constraint(model, x, MOI.EqualTo(0.0))
+    set = MathOptLazy.LazyScalarSet(MOI.EqualTo(1.0))
+    c = MOI.add_constraint(model, 1.0 * x, set)
+    MOI.optimize!(model)
+    @test MOI.get(model, MOI.TerminationStatus()) == MOI.INFEASIBLE
+    MOI.delete(model, c)
+    MOI.optimize!(model)
+    @test MOI.get(model, MOI.TerminationStatus()) == MOI.OPTIMAL
+    return
+end
+
+function test_is_valid()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variable(model)
+    set = MathOptLazy.LazyScalarSet(MOI.EqualTo(1.0))
+    c = MOI.add_constraint(model, 1.0 * x, set)
+    @test !MOI.is_valid(model, typeof(c)(c.value - 1))
+    @test MOI.is_valid(model, c)
+    @test !MOI.is_valid(model, typeof(c)(c.value + 1))
+    F, S = MOI.VariableIndex, MathOptLazy.LazyScalarSet{MOI.ZeroOne}
+    @test !MOI.is_valid(model, MOI.ConstraintIndex{F,S}(-1))
+    @test !MOI.is_valid(model, MOI.ConstraintIndex{F,S}(0))
+    @test !MOI.is_valid(model, MOI.ConstraintIndex{F,S}(1))
     return
 end
 

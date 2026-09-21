@@ -69,16 +69,27 @@ Base.broadcastable(::Lazy) = Ref(Lazy())
 
 ### _LazyData
 
+@enum(
+    _LAZY_CONSTRAINT_STATUS,
+    _kLAZY_CONSTRAINT_ACTIVE,
+    _kLAZY_CONSTRAINT_INACTIVE,
+    _kLAZY_CONSTRAINT_DELETED,
+)
+
 struct _LazyData{F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
     data::Vector{Tuple{F,S}}
-    active::Vector{Bool}
+    status::Vector{_LAZY_CONSTRAINT_STATUS}
     index::Vector{MOI.ConstraintIndex{F,S}}
 
     function _LazyData{
         F,
         S,
     }() where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
-        return new{F,S}(Tuple{F,S}[], Bool[], MOI.ConstraintIndex{F,S}[])
+        return new{F,S}(
+            Tuple{F,S}[],
+            _LAZY_CONSTRAINT_STATUS[],
+            MOI.ConstraintIndex{F,S}[],
+        )
     end
 end
 
@@ -330,6 +341,27 @@ function MOI.add_constraint(
     return MOI.add_constraint(model.inner, f, s)
 end
 
+### MOI.delete!
+
+function MOI.delete(model::Optimizer, ci::MOI.ConstraintIndex{F,S}) where {F,S}
+    MOI.delete(model.inner, ci)
+    return
+end
+
+function MOI.delete(
+    model::Optimizer,
+    ci::MOI.ConstraintIndex{F,LazyScalarSet{S}},
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    data = _data(model, F, S)
+    if data.status[ci.value] == _kLAZY_CONSTRAINT_ACTIVE
+        MOI.delete(model.inner, data.index[ci.value])
+        data.status[ci.value] = _kLAZY_CONSTRAINT_DELETED
+    elseif data.status[ci.value] == _kLAZY_CONSTRAINT_INACTIVE
+        data.status[ci.value] = _kLAZY_CONSTRAINT_DELETED
+    end
+    return
+end
+
 ### MOI.compute_conflict!
 
 MOI.compute_conflict!(model::Optimizer) = MOI.compute_conflict!(model.inner)
@@ -361,7 +393,11 @@ function MOI.is_valid(
     ci::MOI.ConstraintIndex{F,LazyScalarSet{S}},
 ) where {F,S}
     ret = _maybe_data(model, F, S)
-    return ret !== nothing && 1 <= ci.value <= length(ret.data)
+    if ret == nothing
+        return false
+    end
+    status = get(ret.status, ci.value, _kLAZY_CONSTRAINT_DELETED)
+    return status != _kLAZY_CONSTRAINT_DELETED
 end
 
 function MOI.get(
@@ -387,7 +423,7 @@ function MOI.add_constraint(
 ) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
     data = _data(model, F, S)
     push!(data.data, (f, s.set))
-    push!(data.active, false)
+    push!(data.status, _kLAZY_CONSTRAINT_INACTIVE)
     push!(data.index, MOI.ConstraintIndex{F,S}(0))
     return MOI.ConstraintIndex{F,LazyScalarSet{S}}(length(data.data))
 end
@@ -430,7 +466,9 @@ function MOI.get(
 ) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
     n = MOI.get(model.inner, attr)
     if (data = _maybe_data(model, F, S)) !== nothing
-        n -= sum((data).active)
+        for status in data.status
+            n -= status == _kLAZY_CONSTRAINT_ACTIVE
+        end
     end
     return n
 end
@@ -441,7 +479,10 @@ function MOI.get(
 ) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
     ret = MOI.get(model.inner, attr)
     if (data = _maybe_data(model, F, S)) !== nothing
-        in_model = Set(ci for (ci, z) in zip(data.index, data.active) if z)
+        in_model = Set{MOI.ConstraintIndex{F,S}}(
+            ci for (ci, status) in zip(data.index, data.status) if
+            status == _kLAZY_CONSTRAINT_ACTIVE
+        )
         ret = filter!(ci -> !(ci in in_model), ret)
     end
     return ret
@@ -523,9 +564,9 @@ function _add_if_unbounded(model::Optimizer, data::_LazyData)
     for (i, (f, s)) in enumerate(data.data)
         if constraints_added >= n
             break
-        elseif !data.active[i]
+        elseif data.status[i] == _kLAZY_CONSTRAINT_INACTIVE
             data.index[i] = MOI.add_constraint(model.inner, f, s)
-            data.active[i] = true
+            data.status[i] = _kLAZY_CONSTRAINT_ACTIVE
             constraints_added += 1
         end
     end
@@ -539,13 +580,13 @@ function _add_if_feasible(
 )
     needs_solve = false
     for (i, (f, s)) in enumerate(data.data)
-        if data.active[i]
+        if data.status[i] != _kLAZY_CONSTRAINT_INACTIVE
             continue
         end
         y = MOI.Utilities.eval_variables(Base.Fix1(getindex, x), model, f)
         if MOI.Utilities.distance_to_set(y, s) > 0
             data.index[i] = MOI.add_constraint(model.inner, f, s)
-            data.active[i] = true
+            data.status[i] = _kLAZY_CONSTRAINT_ACTIVE
             needs_solve = true
         end
     end
