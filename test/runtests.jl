@@ -180,6 +180,15 @@ function test_writing_mof_file()
     contents = sprint(write, dest)
     @test occursin("ZeroOne", contents)
     @test occursin("LazyScalarSet", contents)
+    io = IOBuffer(contents)
+    new_model = MOI.FileFormats.MOF.Model()
+    read!(io, new_model)
+    y = only(MOI.get(new_model, MOI.ListOfVariableIndices()))
+    F, S = MOI.VariableIndex, MathOptLazy.LazyScalarSet{MOI.ZeroOne}
+    ci = MOI.ConstraintIndex{F,S}(y.value)
+    @test MOI.is_valid(new_model, ci)
+    @test MOI.get(new_model, MOI.ConstraintSet(), ci) ==
+          MathOptLazy.LazyScalarSet(MOI.ZeroOne())
     return
 end
 

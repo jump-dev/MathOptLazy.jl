@@ -32,6 +32,14 @@ function MOI.FileFormats.MOF.moi_to_object(
     return (; type = "LazyScalarSet", set = inner_set)
 end
 
+function MOI.FileFormats.MOF.set_to_moi(
+    ::Val{:LazyScalarSet},
+    ::Type{T},
+    object::Dict,
+) where {T}
+    return LazyScalarSet(MOI.FileFormats.MOF.set_to_moi(T, object["set"]))
+end
+
 """
     Lazy(; lazy::Bool = true)
 
