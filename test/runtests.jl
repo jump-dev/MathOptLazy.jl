@@ -636,6 +636,26 @@ function test_print_log()
     return
 end
 
+function test_solve_time_sec()
+    N = 10
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variables(model, N)
+    for i in 1:N
+        MOI.add_constraint(model, x[i], MOI.GreaterThan(0.0))
+        MOI.add_constraint(model, x[i], MOI.Integer())
+        set = MathOptLazy.LazyScalarSet(MOI.LessThan(1.0))
+        MOI.add_constraint(model, 1.0 * x[i], set)
+    end
+    f = sum(abs(cos(i)) * x[i] for i in 1:N)
+    MOI.add_constraint(model, f, MOI.LessThan(1.0))
+    MOI.set(model, MOI.ObjectiveSense(), MOI.MAX_SENSE)
+    g = sum(abs(sin(i)) * x[i] for i in 1:N)
+    MOI.set(model, MOI.ObjectiveFunction{typeof(g)}(), g)
+    MOI.optimize!(model)
+    @test 0 <= MOI.get(model, MOI.SolveTimeSec()) <= 10
+    return
+end
+
 end  # TestMathOptLazy
 
 TestMathOptLazy.runtests()
