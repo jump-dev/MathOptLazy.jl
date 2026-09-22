@@ -196,6 +196,7 @@ mutable struct Optimizer{OT<:MOI.ModelLike} <: MOI.AbstractOptimizer
     inner::OT
     algorithm::AbstractAlgorithm
     lazy::Dict{Tuple{Type,Type},_LazyData}
+    silent::Bool
 
     function Optimizer(inner_fn; kwargs...)
         inner = MOI.instantiate(inner_fn; kwargs...)
@@ -203,6 +204,7 @@ mutable struct Optimizer{OT<:MOI.ModelLike} <: MOI.AbstractOptimizer
             inner,
             Iterative(),
             Dict{Tuple{Type,Type},_LazyData}(),
+            false,
         )
     end
 end
@@ -219,6 +221,20 @@ function MOI.set(model::Optimizer, ::Algorithm, value::AbstractAlgorithm)
 end
 
 MOI.Utilities.map_indices(::Function, algorithm::AbstractAlgorithm) = algorithm
+
+### MOI.Silent
+
+MOI.supports(::Optimizer, ::MOI.Silent) = true
+
+MOI.get(model::Optimizer, ::MOI.Silent) = model.silent
+
+function MOI.set(model::Optimizer, ::MOI.Silent, value::Bool)
+    model.silent = value
+    if MOI.supports(model.inner, MOI.Silent())
+        MOI.set(model.inner, MOI.Silent(), value)
+    end
+    return
+end
 
 ### Fallbacks
 
@@ -544,9 +560,17 @@ end
 
 MOI.optimize!(model::Optimizer) = _optimize!(model, model.algorithm)
 
+### MathOptLazy.Iterative
+
 function _optimize!(model::Optimizer, ::Iterative)
     if (undo = _relax_integrality(model.inner)) !== nothing
+        if !model.silent
+            println("[MathOptLazy] relaxing binary and integer variables")
+        end
         _iterate(model; start = false)
+        if !model.silent
+            println("[MathOptLazy] re-enforcing binary and integer variables")
+        end
         undo()
     end
     _iterate(model; start = true)
@@ -554,7 +578,7 @@ function _optimize!(model::Optimizer, ::Iterative)
 end
 
 function _iterate(model::Optimizer; start::Bool)
-    needs_solve = true
+    constraints_added = 1  # A white lie to enter the iteration loop
     x = MOI.get(model, MOI.ListOfVariableIndices())
     # TODO(odow): if the solver supports VariablePrimalStart, we will update the
     # primal starts during the solve process. This is destructive and in-place.
@@ -564,25 +588,31 @@ function _iterate(model::Optimizer; start::Bool)
     # ::Optimizer, but this is a hassle and no one probably cares. Revisit this
     # decision if it ever becomes a problem.
     start &= MOI.supports(model, MOI.VariablePrimalStart(), MOI.VariableIndex)
-    while needs_solve
-        needs_solve = false
+    while constraints_added > 0
+        constraints_added = 0
+        if !model.silent
+            println("[MathOptLazy] solving current subproblem\n")
+        end
         MOI.optimize!(model.inner)
         if MOI.get(model, MOI.TerminationStatus()) == MOI.DUAL_INFEASIBLE
             # The problem is unbounded, but it might not be if we add more
             # constraints.
             for v in values(model.lazy)
-                needs_solve |= _add_if_unbounded(model, v)
+                constraints_added += _add_if_unbounded(model, v)
             end
         elseif MOI.get(model, MOI.PrimalStatus()) == MOI.FEASIBLE_POINT
             X = Dict(xi => MOI.get(model, MOI.VariablePrimal(), xi) for xi in x)
             for v in values(model.lazy)
-                needs_solve |= _add_if_feasible(model, v, X)
+                constraints_added += _add_if_feasible(model, v, X)
             end
-            if start && needs_solve
+            if start && constraints_added > 0
                 for (xi, v) in X
                     MOI.set(model, MOI.VariablePrimalStart(), xi, v)
                 end
             end
+        end
+        if !model.silent
+            println("\n[MathOptLazy] added $(constraints_added) constraints")
         end
     end
     return
@@ -707,7 +737,7 @@ function _add_if_unbounded(model::Optimizer, data::_LazyData)
             constraints_added += 1
         end
     end
-    return constraints_added > 0
+    return constraints_added
 end
 
 function _add_if_feasible(
@@ -715,7 +745,7 @@ function _add_if_feasible(
     data::_LazyData,
     x::Dict{MOI.VariableIndex},
 )
-    needs_solve = false
+    constraints_added = 0
     for (i, (f, s)) in enumerate(data.data)
         if data.status[i] != _kLAZY_CONSTRAINT_INACTIVE
             continue
@@ -724,11 +754,13 @@ function _add_if_feasible(
         if MOI.Utilities.distance_to_set(y, s) > 0
             data.index[i] = MOI.add_constraint(model.inner, f, s)
             data.status[i] = _kLAZY_CONSTRAINT_ACTIVE
-            needs_solve = true
+            constraints_added += 1
         end
     end
-    return needs_solve
+    return constraints_added
 end
+
+### MathOptLazy.Callback
 
 function _optimize!(model::Optimizer, ::Callback)
     function callback(cb_data)
@@ -759,6 +791,8 @@ function _optimize!(model::Optimizer, ::Callback)
     MOI.optimize!(model.inner)
     return
 end
+
+### MathOptLazy.SolverSpecific
 
 function _optimize!(model::Optimizer{T}, ::SolverSpecific) where {T}
     return error(
