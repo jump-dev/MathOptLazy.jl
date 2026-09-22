@@ -120,8 +120,23 @@ This algorithm iteratively solves a sequence of problems that iteratively add
 violated lazy constraints to the main problem.
 
 This algorithm works for all problem types, including continuous problems with
-no discrete variables. The downside is that it may not re-use information
-between solves.
+no discrete variables.
+
+The downside is that it may not re-use information between solves. For example,
+when solving a MIP a solver like HiGHS re-uses only the primal start; it does
+not re-use information from the branch-and-bound tree.
+
+In an attempt to improve performance, the algorithm runs in two phases. The
+first phase iterates on the continuous relaxation. The second phase restores
+integrality and iterates on the original problem, starting from the lazy
+constraints that the first phase added. This is helpful when the optimal MIP
+solution is close to the optimal LP relaxation.
+
+The first phase is cheap because a solver that uses the simplex method can
+warm-start from the previous basis after new constraints are added, whereas
+every iteration of the second phase solves a mixed-integer program from
+scratch. The second phase is still needed because a lazy constraint can be
+violated by an integer solution even if the relaxation satisfies it.
 """
 struct Iterative <: AbstractAlgorithm end
 
@@ -530,6 +545,15 @@ end
 MOI.optimize!(model::Optimizer) = _optimize!(model, model.algorithm)
 
 function _optimize!(model::Optimizer, ::Iterative)
+    if (undo = _relax_integrality(model.inner)) !== nothing
+        _iterate(model; start = false)
+        undo()
+    end
+    _iterate(model; start = true)
+    return
+end
+
+function _iterate(model::Optimizer; start::Bool)
     needs_solve = true
     x = MOI.get(model, MOI.ListOfVariableIndices())
     # TODO(odow): if the solver supports VariablePrimalStart, we will update the
@@ -539,7 +563,7 @@ function _optimize!(model::Optimizer, ::Iterative)
     # solver's solution. To fix properly, we should cache the start in
     # ::Optimizer, but this is a hassle and no one probably cares. Revisit this
     # decision if it ever becomes a problem.
-    start = MOI.supports(model, MOI.VariablePrimalStart(), MOI.VariableIndex)
+    start &= MOI.supports(model, MOI.VariablePrimalStart(), MOI.VariableIndex)
     while needs_solve
         needs_solve = false
         MOI.optimize!(model.inner)
@@ -560,6 +584,109 @@ function _optimize!(model::Optimizer, ::Iterative)
                 end
             end
         end
+    end
+    return
+end
+
+# Guess-timate the coefficient type based on variable bounds.
+function _coefficient_type(model::MOI.ModelLike)
+    for (F, S) in MOI.get(model, MOI.ListOfConstraintTypesPresent())
+        if F == MOI.VariableIndex && (T = _coefficient_type(S)) !== nothing
+            return T
+        end
+    end
+    return Float64
+end
+
+_coefficient_type(::Type{S}) where {S} = nothing
+
+_coefficient_type(::Type{MOI.GreaterThan{T}}) where {T} = T
+
+_coefficient_type(::Type{MOI.LessThan{T}}) where {T} = T
+
+_coefficient_type(::Type{MOI.EqualTo{T}}) where {T} = T
+
+_coefficient_type(::Type{MOI.Interval{T}}) where {T} = T
+
+function _relax_integrality(model::MOI.ModelLike)
+    F = MOI.VariableIndex
+    integer_ci = MOI.get(model, MOI.ListOfConstraintIndices{F,MOI.Integer}())
+    binary_ci = MOI.get(model, MOI.ListOfConstraintIndices{F,MOI.ZeroOne}())
+    if isempty(integer_ci) && isempty(binary_ci)
+        return nothing
+    end
+    integer_x = MOI.get.(model, MOI.ConstraintFunction(), integer_ci)
+    MOI.delete(model, integer_ci)
+    binary_x = MOI.get.(model, MOI.ConstraintFunction(), binary_ci)
+    ret = _relax_binaries(model, binary_x)
+    function undo()
+        MOI.add_constraint.(model, integer_x, MOI.Integer())
+        MOI.add_constraint.(model, binary_x, MOI.ZeroOne())
+        for (xi, set) in ret
+            _update_set!(model, xi, set)
+        end
+        return
+    end
+    return undo
+end
+
+function _get_set(model, x::MOI.VariableIndex, ::Type{S}) where {S}
+    ci = MOI.ConstraintIndex{MOI.VariableIndex,S}(x.value)
+    if MOI.is_valid(model, ci)
+        return MOI.get(model, MOI.ConstraintSet(), ci)
+    end
+    return nothing
+end
+
+function _update_set!(model, x::MOI.VariableIndex, set::S) where {S}
+    ci = MOI.ConstraintIndex{MOI.VariableIndex,S}(x.value)
+    MOI.set(model, MOI.ConstraintSet(), ci, set)
+    return
+end
+
+function _update_set!(model, x::MOI.VariableIndex, ::Type{S}) where {S}
+    MOI.delete(model, MOI.ConstraintIndex{MOI.VariableIndex,S}(x.value))
+    return
+end
+
+function _relax_binaries(model::MOI.ModelLike, x::Vector{MOI.VariableIndex})
+    ret = Any[]
+    T = _coefficient_type(model)
+    for xi in x
+        _relax_binaries(ret, model, xi, T)
+    end
+    return ret
+end
+
+function _relax_binaries(
+    ret::Vector{Any},
+    model::MOI.ModelLike,
+    x::MOI.VariableIndex,
+    ::Type{T},
+) where {T}
+    ci = MOI.ConstraintIndex{MOI.VariableIndex,MOI.ZeroOne}(x.value)
+    MOI.delete(model, ci)
+    if _get_set(model, x, MOI.EqualTo{T}) !== nothing
+        return
+    elseif (set = _get_set(model, x, MOI.Interval{T})) !== nothing
+        new_set = MOI.Interval(max(set.lower, zero(T)), min(set.upper, one(T)))
+        _update_set!(model, x, new_set)
+        push!(ret, (x, set))
+        return
+    end
+    if (set = _get_set(model, x, MOI.GreaterThan{T})) !== nothing
+        _update_set!(model, x, MOI.GreaterThan(max(set.lower, zero(T))))
+        push!(ret, (x, set))
+    else
+        MOI.add_constraint(model, x, MOI.GreaterThan(zero(T)))
+        push!(ret, (x, MOI.GreaterThan{T}))
+    end
+    if (set = _get_set(model, x, MOI.LessThan{T})) !== nothing
+        _update_set!(model, x, MOI.LessThan(min(set.upper, one(T))))
+        push!(ret, (x, set))
+    else
+        MOI.add_constraint(model, x, MOI.LessThan(one(T)))
+        push!(ret, (x, MOI.LessThan{T}))
     end
     return
 end
