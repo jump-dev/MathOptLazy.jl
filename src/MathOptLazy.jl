@@ -197,6 +197,7 @@ mutable struct Optimizer{OT<:MOI.ModelLike} <: MOI.AbstractOptimizer
     algorithm::AbstractAlgorithm
     lazy::Dict{Tuple{Type,Type},_LazyData}
     silent::Bool
+    solve_time_sec::Float64
 
     function Optimizer(inner_fn; kwargs...)
         inner = MOI.instantiate(inner_fn; kwargs...)
@@ -205,6 +206,7 @@ mutable struct Optimizer{OT<:MOI.ModelLike} <: MOI.AbstractOptimizer
             Iterative(),
             Dict{Tuple{Type,Type},_LazyData}(),
             false,
+            NaN,
         )
     end
 end
@@ -241,6 +243,7 @@ end
 function MOI.empty!(model::Optimizer)
     MOI.empty!(model.inner)
     empty!(model.lazy)
+    model.solve_time_sec = NaN
     return
 end
 
@@ -556,9 +559,18 @@ function MOI.set(
     return throw(MOI.SetAttributeNotAllowed(attr, msg))
 end
 
+### MOI.SolveTimeSec
+
+MOI.get(model::Optimizer, ::MOI.SolveTimeSec) = model.solve_time_sec
+
 ### MOI.optimize!
 
-MOI.optimize!(model::Optimizer) = _optimize!(model, model.algorithm)
+function MOI.optimize!(model::Optimizer)
+    start_time = time()
+    _optimize!(model, model.algorithm)
+    model.solve_time_sec = time() - start_time
+    return
+end
 
 ### MathOptLazy.Iterative
 
