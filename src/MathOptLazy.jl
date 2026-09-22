@@ -604,7 +604,11 @@ MOI.get(model::Optimizer, ::MOI.SolveTimeSec) = model.solve_time_sec
 
 function MOI.optimize!(model::Optimizer)
     start_time = time()
-    _optimize!(model, model.algorithm)
+    if isempty(model.lazy)
+        MOI.optimize!(model.inner)
+    else
+        _optimize!(model, model.algorithm)
+    end
     model.solve_time_sec = time() - start_time
     return
 end

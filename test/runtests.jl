@@ -691,6 +691,25 @@ function test_constraint_dual()
     return
 end
 
+function test_optimize_no_lazy()
+    N = 10
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variables(model, N)
+    MOI.add_constraint.(model, x, MOI.ZeroOne())
+    f = sum(abs(cos(i)) * x[i] for i in 1:N)
+    MOI.add_constraint(model, f, MOI.LessThan(1.0))
+    MOI.set(model, MOI.ObjectiveSense(), MOI.MAX_SENSE)
+    g = sum(abs(sin(i)) * x[i] for i in 1:N)
+    MOI.set(model, MOI.ObjectiveFunction{typeof(g)}(), g)
+    dir = mktempdir()
+    open(joinpath(dir, "out.log"), "w") do io
+        return redirect_stdout(() -> MOI.optimize!(model), io)
+    end
+    contents = read(joinpath(dir, "out.log"), String)
+    @test !occursin("[MathOptLazy]", contents)
+    return
+end
+
 end  # TestMathOptLazy
 
 TestMathOptLazy.runtests()
