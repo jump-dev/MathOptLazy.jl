@@ -466,6 +466,117 @@ function test_list_of_constraint_attributes_set()
     return
 end
 
+function test_relax_integrality_equal_to()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variable(model)
+    c_z = MOI.add_constraint(model, x, MOI.ZeroOne())
+    MOI.add_constraint(model, x, MOI.EqualTo(0.5))
+    undo = MathOptLazy._relax_integrality(model.inner)
+    target = HiGHS.Optimizer()
+    y, _ = MOI.add_constrained_variable(target, MOI.EqualTo(0.5))
+    @test sprint(print, model.inner) == sprint(print, target)
+    undo()
+    @test sprint(print, model.inner) != sprint(print, target)
+    MOI.add_constraint(target, y, MOI.ZeroOne())
+    @test sprint(print, model.inner) == sprint(print, target)
+    return
+end
+
+function test_relax_integrality_interval()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variable(model)
+    c_z = MOI.add_constraint(model, x, MOI.ZeroOne())
+    MOI.add_constraint(model, x, MOI.Interval(-1.0, 2.0))
+    undo = MathOptLazy._relax_integrality(model.inner)
+    target = HiGHS.Optimizer()
+    y, cy = MOI.add_constrained_variable(target, MOI.Interval(0.0, 1.0))
+    @test sprint(print, model.inner) == sprint(print, target)
+    undo()
+    @test sprint(print, model.inner) != sprint(print, target)
+    MOI.set(target, MOI.ConstraintSet(), cy, MOI.Interval(-1.0, 2.0))
+    MOI.add_constraint(target, y, MOI.ZeroOne())
+    @test sprint(print, model.inner) == sprint(print, target)
+    return
+end
+
+function test_relax_integrality_no_bound()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variable(model)
+    c_z = MOI.add_constraint(model, x, MOI.ZeroOne())
+    undo = MathOptLazy._relax_integrality(model.inner)
+    target = HiGHS.Optimizer()
+    y = MOI.add_variable(target)
+    c_l = MOI.add_constraint(target, y, MOI.GreaterThan(0.0))
+    c_u = MOI.add_constraint(target, y, MOI.LessThan(1.0))
+    @test sprint(print, model.inner) == sprint(print, target)
+    undo()
+    @test sprint(print, model.inner) != sprint(print, target)
+    MOI.delete(target, c_l)
+    MOI.delete(target, c_u)
+    MOI.add_constraint(target, y, MOI.ZeroOne())
+    @test sprint(print, model.inner) == sprint(print, target)
+    return
+end
+
+function test_relax_integrality_greater_than()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variable(model)
+    MOI.add_constraint(model, x, MOI.GreaterThan(-0.5))
+    c_z = MOI.add_constraint(model, x, MOI.ZeroOne())
+    undo = MathOptLazy._relax_integrality(model.inner)
+    target = HiGHS.Optimizer()
+    y, cy = MOI.add_constrained_variable(target, MOI.GreaterThan(0.0))
+    c_u = MOI.add_constraint(target, y, MOI.LessThan(1.0))
+    @test sprint(print, model.inner) == sprint(print, target)
+    undo()
+    @test sprint(print, model.inner) != sprint(print, target)
+    MOI.set(target, MOI.ConstraintSet(), cy, MOI.GreaterThan(-0.5))
+    MOI.add_constraint(target, y, MOI.ZeroOne())
+    MOI.delete(target, c_u)
+    @test sprint(print, model.inner) == sprint(print, target)
+    return
+end
+
+function test_relax_integrality_less_than()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variable(model)
+    MOI.add_constraint(model, x, MOI.LessThan(1.5))
+    c_z = MOI.add_constraint(model, x, MOI.ZeroOne())
+    undo = MathOptLazy._relax_integrality(model.inner)
+    target = HiGHS.Optimizer()
+    y, cy = MOI.add_constrained_variable(target, MOI.LessThan(1.0))
+    c_l = MOI.add_constraint(target, y, MOI.GreaterThan(0.0))
+    @test sprint(print, model.inner) == sprint(print, target)
+    undo()
+    @test sprint(print, model.inner) != sprint(print, target)
+    MOI.set(target, MOI.ConstraintSet(), cy, MOI.LessThan(1.5))
+    MOI.add_constraint(target, y, MOI.ZeroOne())
+    MOI.delete(target, c_l)
+    @test sprint(print, model.inner) == sprint(print, target)
+    return
+end
+
+function test_relax_integrality_semi_integer()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variable(model)
+    c_z = MOI.add_constraint(model, x, MOI.ZeroOne())
+    t, _ = MOI.add_constrained_variable(model, MOI.Semiinteger(3.0, 4.0))
+    undo = MathOptLazy._relax_integrality(model.inner)
+    target = HiGHS.Optimizer()
+    y = MOI.add_variable(target)
+    c_l = MOI.add_constraint(target, y, MOI.GreaterThan(0.0))
+    c_u = MOI.add_constraint(target, y, MOI.LessThan(1.0))
+    t, _ = MOI.add_constrained_variable(target, MOI.Semiinteger(3.0, 4.0))
+    @test sprint(print, model.inner) == sprint(print, target)
+    undo()
+    @test sprint(print, model.inner) != sprint(print, target)
+    MOI.add_constraint(target, y, MOI.ZeroOne())
+    MOI.delete(target, c_l)
+    MOI.delete(target, c_u)
+    @test sprint(print, model.inner) == sprint(print, target)
+    return
+end
+
 end  # TestMathOptLazy
 
 TestMathOptLazy.runtests()

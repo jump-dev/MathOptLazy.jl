@@ -545,8 +545,7 @@ end
 MOI.optimize!(model::Optimizer) = _optimize!(model, model.algorithm)
 
 function _optimize!(model::Optimizer, ::Iterative)
-    T = _coefficient_type(model)
-    if (undo = _relax_integrality(model.inner, T)) !== nothing
+    if (undo = _relax_integrality(model.inner)) !== nothing
         _iterate(model; start = false)
         undo()
     end
@@ -589,24 +588,27 @@ function _iterate(model::Optimizer; start::Bool)
     return
 end
 
-# The coefficient type of the lazy constraints. We need it to add the bounds of
-# a relaxed `MOI.ZeroOne` variable.
-function _coefficient_type(model::Optimizer)
-    for (F, _) in keys(model.lazy)
-        if (T = _coefficient_type(F)) !== nothing
+# Guess-timate the coefficient type based on variable bounds.
+function _coefficient_type(model::MOI.ModelLike)
+    for (F, S) in MOI.get(model, MOI.ListOfConstraintTypesPresent())
+        if F == MOI.VariableIndex && (T = _coefficient_type(S)) !== nothing
             return T
         end
     end
     return Float64
 end
 
-_coefficient_type(::Type{<:MOI.AbstractScalarFunction}) = nothing
+_coefficient_type(::Type{S}) where {S} = nothing
 
-_coefficient_type(::Type{MOI.ScalarAffineFunction{T}}) where {T} = T
+_coefficient_type(::Type{MOI.GreaterThan{T}}) where {T} = T
 
-_coefficient_type(::Type{MOI.ScalarQuadraticFunction{T}}) where {T} = T
+_coefficient_type(::Type{MOI.LessThan{T}}) where {T} = T
 
-function _relax_integrality(model::MOI.ModelLike, ::Type{T}) where {T}
+_coefficient_type(::Type{MOI.EqualTo{T}}) where {T} = T
+
+_coefficient_type(::Type{MOI.Interval{T}}) where {T} = T
+
+function _relax_integrality(model::MOI.ModelLike)
     F = MOI.VariableIndex
     integer_ci = MOI.get(model, MOI.ListOfConstraintIndices{F,MOI.Integer}())
     binary_ci = MOI.get(model, MOI.ListOfConstraintIndices{F,MOI.ZeroOne}())
@@ -616,11 +618,7 @@ function _relax_integrality(model::MOI.ModelLike, ::Type{T}) where {T}
     integer_x = MOI.get.(model, MOI.ConstraintFunction(), integer_ci)
     MOI.delete(model, integer_ci)
     binary_x = MOI.get.(model, MOI.ConstraintFunction(), binary_ci)
-    MOI.delete(model, binary_ci)
-    ret = Any[]
-    for xi in binary_x
-        _relax_binary_bounds(ret, model, xi, T)
-    end
+    ret = _relax_binaries(model, binary_x)
     function undo()
         MOI.add_constraint.(model, integer_x, MOI.Integer())
         MOI.add_constraint.(model, binary_x, MOI.ZeroOne())
@@ -651,12 +649,23 @@ function _update_set!(model, x::MOI.VariableIndex, ::Type{S}) where {S}
     return
 end
 
-function _relax_binary_bounds(
+function _relax_binaries(model::MOI.ModelLike, x::Vector{MOI.VariableIndex})
+    ret = Any[]
+    T = _coefficient_type(model)
+    for xi in x
+        _relax_binaries(ret, model, xi, T)
+    end
+    return ret
+end
+
+function _relax_binaries(
     ret::Vector{Any},
     model::MOI.ModelLike,
     x::MOI.VariableIndex,
     ::Type{T},
 ) where {T}
+    ci = MOI.ConstraintIndex{MOI.VariableIndex,MOI.ZeroOne}(x.value)
+    MOI.delete(model, ci)
     if _get_set(model, x, MOI.EqualTo{T}) !== nothing
         return
     elseif (set = _get_set(model, x, MOI.Interval{T})) !== nothing
