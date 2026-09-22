@@ -214,6 +214,74 @@ function test_lazy_bounds_knapsack()
     return
 end
 
+function _solve_knapsack(optimizer, profit, weight; lazy::Bool)
+    N = length(profit)
+    model = direct_model(optimizer)
+    set_silent(model)
+    @variable(model, x[1:N] >= 0, Int)
+    @constraint(model, [i in 1:N], x[i] <= 1, MathOptLazy.Lazy(; lazy))
+    @constraint(model, weight' * x <= 0.3 * sum(weight))
+    @objective(model, Max, profit' * x)
+    optimize!(model)
+    @test termination_status(model) == OPTIMAL
+    @test all(<=(1 + 1e-6), value.(x))
+    return objective_value(model)
+end
+
+function test_iterative_relax_integrality_knapsack()
+    for seed in 1:5
+        profit = [1 + abs(sin(seed * i)) for i in 1:20]
+        weight = [1 + abs(cos(seed * i)) for i in 1:20]
+        expected =
+            _solve_knapsack(HiGHS.Optimizer(), profit, weight; lazy = false)
+        model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+        MOI.set(model, MathOptLazy.Algorithm(), MathOptLazy.Iterative())
+        actual = _solve_knapsack(model, profit, weight; lazy = true)
+        @test isapprox(actual, expected; atol = 1e-6)
+    end
+    return
+end
+
+function test_iterative_relax_integrality_is_undone()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    MOI.set(model, MOI.Silent(), true)
+    x = MOI.add_variables(model, 6)
+    F = MOI.VariableIndex
+    bounds = [
+        (x[2], MOI.GreaterThan(-1.0)),
+        (x[3], MOI.LessThan(0.5)),
+        (x[4], MOI.Interval(-2.0, 2.0)),
+        (x[5], MOI.EqualTo(1.0)),
+    ]
+    for (xi, set) in bounds
+        MOI.add_constraint(model, xi, set)
+    end
+    MOI.add_constraint.(model, x[1:5], MOI.ZeroOne())
+    MOI.add_constraint(model, x[6], MOI.Integer())
+    MOI.add_constraint(model, x[6], MOI.Interval(0.0, 3.5))
+    f = sum(1.0 * xi for xi in x)
+    MOI.add_constraint(model, f, MathOptLazy.LazyScalarSet(MOI.LessThan(4.5)))
+    MOI.set(model, MOI.ObjectiveSense(), MOI.MAX_SENSE)
+    MOI.set(model, MOI.ObjectiveFunction{typeof(f)}(), f)
+    types = MOI.get(model.inner, MOI.ListOfConstraintTypesPresent())
+    count_of(F, S) = MOI.get(model.inner, MOI.NumberOfConstraints{F,S}())
+    before = Dict((F, S) => count_of(F, S) for (F, S) in types)
+    MOI.optimize!(model)
+    @test MOI.get(model, MOI.TerminationStatus()) == MOI.OPTIMAL
+    # x[3] <= 0.5 and x[6] <= 3.5 are binding only because of integrality.
+    @test MOI.get(model, MOI.ObjectiveValue()) ≈ 4.0
+    @test MOI.get(model, MOI.VariablePrimal(), x[3]) ≈ 0.0
+    # The lazy constraint is now in the inner optimizer. Nothing else changed.
+    before[(typeof(f), MOI.LessThan{Float64})] = 1
+    types = MOI.get(model.inner, MOI.ListOfConstraintTypesPresent())
+    @test Dict((F, S) => count_of(F, S) for (F, S) in types) == before
+    for (xi, set) in bounds
+        ci = MOI.ConstraintIndex{F,typeof(set)}(xi.value)
+        @test MOI.get(model, MOI.ConstraintSet(), ci) == set
+    end
+    return
+end
+
 function test_jump_glpk_callback()
     N = 10
     model = Model(() -> MathOptLazy.Optimizer(GLPK.Optimizer))
