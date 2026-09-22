@@ -491,6 +491,13 @@ function MOI.get(
     return ret
 end
 
+function MOI.get(
+    ::Optimizer,
+    ::MOI.ListOfConstraintAttributesSet{F,LazyScalarSet{S}},
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    return MOI.AbstractConstraintAttribute[]
+end
+
 function MOI.supports(
     model::Optimizer,
     ::MOI.AbstractConstraintAttribute,
