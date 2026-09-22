@@ -559,6 +559,35 @@ function MOI.set(
     return throw(MOI.SetAttributeNotAllowed(attr, msg))
 end
 
+function MOI.get(
+    model::Optimizer,
+    attr::MOI.ConstraintPrimal,
+    ci::MOI.ConstraintIndex{F,LazyScalarSet{S}},
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    data = _data(model, F, S)
+    if data.status[ci.value] == _kLAZY_CONSTRAINT_ACTIVE
+        return MOI.get(model.inner, attr, data.index[ci.value])
+    end
+    f = first(data.data[ci.value])
+    return MOI.Utilities.eval_variables(model, f) do xi
+        return MOI.get(model, MOI.VariablePrimal(attr.result_index), xi)
+    end
+end
+
+function MOI.get(
+    model::Optimizer,
+    attr::MOI.ConstraintDual,
+    ci::MOI.ConstraintIndex{F,LazyScalarSet{S}},
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    data = _data(model, F, S)
+    if data.status[ci.value] == _kLAZY_CONSTRAINT_ACTIVE
+        return MOI.get(model.inner, attr, data.index[ci.value])
+    end
+    # If a lazy constraint is not active, it must be non-binding, and its dual
+    # is therefore zero.
+    return 0.0
+end
+
 ### MOI.SolveTimeSec
 
 MOI.get(model::Optimizer, ::MOI.SolveTimeSec) = model.solve_time_sec

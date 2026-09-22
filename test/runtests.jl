@@ -656,6 +656,32 @@ function test_solve_time_sec()
     return
 end
 
+function test_constraint_dual()
+    N = 10
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variables(model, N)
+    c_lb = MOI.add_constraint.(model, x, MOI.GreaterThan(0.0))
+    set = MathOptLazy.LazyScalarSet(MOI.LessThan(1.0))
+    c_ub = MOI.add_constraint.(model, 1.0 .* x, set)
+    f = sum(abs(cos(i)) * x[i] for i in 1:N)
+    MOI.add_constraint(model, f, MOI.LessThan(1.0))
+    MOI.set(model, MOI.ObjectiveSense(), MOI.MAX_SENSE)
+    g = sum(abs(sin(i)) * x[i] for i in 1:N)
+    MOI.set(model, MOI.ObjectiveFunction{typeof(g)}(), g)
+    MOI.optimize!(model)
+    @test MOI.get(model, MOI.DualStatus()) == MOI.FEASIBLE_POINT
+    dual = MOI.get(model, MOI.ConstraintDual(), c_ub)
+    primal = MOI.get(model, MOI.ConstraintPrimal(), c_ub)
+    for i in 1:N
+        if isapprox(primal[i], 1; atol = 1e-4)
+            @test dual[i] < -1e-4
+        else
+            @test isapprox(dual[i], 0; atol = -1e-4)
+        end
+    end
+    return
+end
+
 end  # TestMathOptLazy
 
 TestMathOptLazy.runtests()
