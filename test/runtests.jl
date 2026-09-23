@@ -742,6 +742,46 @@ function test_lazy_kwarg_auto()
     return
 end
 
+function test_Optimizer_constructor_plain()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    @test model.inner isa HiGHS.Optimizer
+    MOI.set(model, MOI.RawOptimizerAttribute("mip_rel_gap"), 1e-2)
+    @test MOI.get(model.inner, MOI.RawOptimizerAttribute("mip_rel_gap")) == 1e-2
+    @test MOI.get(model, MOI.RawOptimizerAttribute("mip_rel_gap")) == 1e-2
+    return
+end
+
+function test_Optimizer_constructor_fn()
+    model = MathOptLazy.Optimizer(() -> HiGHS.Optimizer())
+    @test model.inner isa HiGHS.Optimizer
+    model = MathOptLazy.Optimizer() do
+        inner = HiGHS.Optimizer()
+        MOI.set(inner, MOI.RawOptimizerAttribute("mip_rel_gap"), 1e-2)
+        return inner
+    end
+    @test model.inner isa HiGHS.Optimizer
+    @test MOI.get(model.inner, MOI.RawOptimizerAttribute("mip_rel_gap")) == 1e-2
+    @test MOI.get(model, MOI.RawOptimizerAttribute("mip_rel_gap")) == 1e-2
+    return
+end
+
+function test_Optimizer_constructor_WithAttributes()
+    model = MathOptLazy.Optimizer(
+        MOI.OptimizerWithAttributes(HiGHS.Optimizer, "mip_rel_gap" => 1e-2),
+    )
+    @test model.inner isa HiGHS.Optimizer
+    @test MOI.get(model.inner, MOI.RawOptimizerAttribute("mip_rel_gap")) == 1e-2
+    return
+end
+
+function test_Optimizer_constructor_bridged()
+    model = MathOptLazy.Optimizer(
+        () -> MOI.instantiate(HiGHS.Optimizer; with_bridge_type = Float64),
+    )
+    @test model.inner isa MOI.Bridges.LazyBridgeOptimizer{HiGHS.Optimizer}
+    return
+end
+
 end  # TestMathOptLazy
 
 TestMathOptLazy.runtests()
