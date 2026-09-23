@@ -36,4 +36,47 @@ function JuMP.in_set_string(
     return JuMP.in_set_string(mode, set.set) * " [lazy]"
 end
 
+"""
+    MathOptLazy.Lazy(
+        model::JuMP.GenericModel,
+        ::Type{F},
+        ::Type{S},
+    ) where {F<:JuMP.AbstractJuMPScalar,S<:MOI.AbstractScalarSet}
+
+A constructor for `MathOptLazy.Lazy` that sets the `lazy::Bool` keyword to
+`true` if `model` supports converting `F`-in-`S` constraints into lazy
+constraints.
+
+!!! compat
+    This struct requires JuMP to be loaded to activate the package extension.
+
+## Examples
+
+```julia
+julia> using JuMP, MathOptLazy, HiGHS
+
+julia> model = Model(HiGHS.Optimizer);
+
+julia> MathOptLazy.Lazy(model, AffExpr, MOI.LessThan{Float64})
+MathOptLazy.Lazy(false)
+
+julia> model = Model(() -> MathOptLazy.Optimizer(HiGHS.Optimizer));
+
+julia> MathOptLazy.Lazy(model, AffExpr, MOI.LessThan{Float64})
+MathOptLazy.Lazy(true)
+```
+"""
+function MathOptLazy.Lazy(
+    model::JuMP.GenericModel,
+    ::Type{F},
+    ::Type{S},
+) where {F<:JuMP.AbstractJuMPScalar,S<:MOI.AbstractScalarSet}
+    lazy = MOI.supports_constraint(
+        JuMP.backend(model),
+        JuMP.moi_function_type(F),
+        MathOptLazy.LazyScalarSet{S},
+    )
+    return MathOptLazy.Lazy(; lazy)
+end
+
 end  # module MathOptLazyJuMPExt
