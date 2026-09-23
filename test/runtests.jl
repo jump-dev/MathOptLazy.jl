@@ -710,6 +710,28 @@ function test_optimize_no_lazy()
     return
 end
 
+function test_lazy_kwarg_true()
+    N = 3
+    model = Model()
+    @variable(model, x[1:N] >= 0, Int)
+    @constraint(model, [i in 1:N], x[i] <= 1, MathOptLazy.Lazy(; lazy = true))
+    S = MathOptLazy.LazyScalarSet{MOI.LessThan{Float64}}
+    @test num_constraints(model, AffExpr, S) == N
+    @test num_constraints(model, AffExpr, MOI.LessThan{Float64}) == 0
+    return
+end
+
+function test_lazy_kwarg_false()
+    N = 3
+    model = Model()
+    @variable(model, x[1:N] >= 0, Int)
+    @constraint(model, [i in 1:N], x[i] <= 1, MathOptLazy.Lazy(; lazy = false))
+    S = MathOptLazy.LazyScalarSet{MOI.LessThan{Float64}}
+    @test num_constraints(model, AffExpr, S) == 0
+    @test num_constraints(model, AffExpr, MOI.LessThan{Float64}) == N
+    return
+end
+
 end  # TestMathOptLazy
 
 TestMathOptLazy.runtests()
