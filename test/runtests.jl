@@ -732,6 +732,16 @@ function test_lazy_kwarg_false()
     return
 end
 
+function test_lazy_kwarg_auto()
+    model = Model(HiGHS.Optimizer)
+    @test MathOptLazy.Lazy(model, AffExpr, MOI.LessThan{Float64}) ==
+          MathOptLazy.Lazy(; lazy = false)
+    model = Model(() -> MathOptLazy.Optimizer(HiGHS.Optimizer))
+    @test MathOptLazy.Lazy(model, AffExpr, MOI.LessThan{Float64}) ==
+          MathOptLazy.Lazy(; lazy = true)
+    return
+end
+
 end  # TestMathOptLazy
 
 TestMathOptLazy.runtests()
