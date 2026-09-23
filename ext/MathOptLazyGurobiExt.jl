@@ -30,7 +30,7 @@ function MathOptLazy._optimize!(
     for data in values(model.lazy)
         _add_constraints!(model, data)
     end
-    MOI.optimize!(model.inner)
+    MathOptLazy._optimize_inner!(model)
     return
 end
 
