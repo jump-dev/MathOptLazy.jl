@@ -205,6 +205,10 @@ mutable struct Optimizer{OT<:MOI.ModelLike} <: MOI.AbstractOptimizer
     algorithm::AbstractAlgorithm
     lazy::Dict{Tuple{Type,Type},_LazyData}
     silent::Bool
+    # Result attributes
+    barrier_iterations::Int64
+    node_count::Int64
+    simplex_iterations::Int64
     solve_time_sec::Float64
 
     function Optimizer(inner_fn; kwargs...)
@@ -214,6 +218,9 @@ mutable struct Optimizer{OT<:MOI.ModelLike} <: MOI.AbstractOptimizer
             Iterative(),
             Dict{Tuple{Type,Type},_LazyData}(),
             false,
+            0,
+            0,
+            0,
             NaN,
         )
     end
@@ -251,6 +258,9 @@ end
 function MOI.empty!(model::Optimizer)
     MOI.empty!(model.inner)
     empty!(model.lazy)
+    model.barrier_iterations = 0
+    model.node_count = 0
+    model.simplex_iterations = 0
     model.solve_time_sec = NaN
     return
 end
@@ -596,16 +606,48 @@ function MOI.get(
     return 0.0
 end
 
+### MOI.BarrierIterations
+
+MOI.get(model::Optimizer, ::MOI.BarrierIterations) = model.barrier_iterations
+
+### MOI.NodeCount
+
+MOI.get(model::Optimizer, ::MOI.NodeCount) = model.node_count
+
+### MOI.SimplexIterations
+
+MOI.get(model::Optimizer, ::MOI.SimplexIterations) = model.simplex_iterations
+
 ### MOI.SolveTimeSec
 
 MOI.get(model::Optimizer, ::MOI.SolveTimeSec) = model.solve_time_sec
 
 ### MOI.optimize!
 
+function _try_get(model::Optimizer, attr::MOI.AbstractModelAttribute, default)
+    try
+        return MOI.get(model.inner, attr)
+    catch
+        return default
+    end
+end
+
+function _optimize_inner!(model::Optimizer)
+    MOI.optimize!(model.inner)
+    model.barrier_iterations += _try_get(model, MOI.BarrierIterations(), 0)
+    model.node_count += _try_get(model, MOI.NodeCount(), 0)
+    model.simplex_iterations += _try_get(model, MOI.SimplexIterations(), 0)
+    return
+end
+
 function MOI.optimize!(model::Optimizer)
     start_time = time()
+    model.barrier_iterations = 0
+    model.node_count = 0
+    model.simplex_iterations = 0
+    model.solve_time_sec = NaN
     if isempty(model.lazy)
-        MOI.optimize!(model.inner)
+        _optimize_inner!(model)
     else
         _optimize!(model, model.algorithm)
     end
@@ -646,7 +688,7 @@ function _iterate(model::Optimizer; start::Bool)
         if !model.silent
             println("[MathOptLazy] solving current subproblem\n")
         end
-        MOI.optimize!(model.inner)
+        _optimize_inner!(model)
         if MOI.get(model, MOI.TerminationStatus()) == MOI.DUAL_INFEASIBLE
             # The problem is unbounded, but it might not be if we add more
             # constraints.
@@ -841,7 +883,7 @@ function _optimize!(model::Optimizer, ::Callback)
         return
     end
     MOI.set(model.inner, MOI.LazyConstraintCallback(), callback)
-    MOI.optimize!(model.inner)
+    _optimize_inner!(model)
     return
 end
 

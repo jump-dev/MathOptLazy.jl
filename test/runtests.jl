@@ -662,6 +662,8 @@ function test_solve_time_sec()
     MOI.set(model, MOI.ObjectiveFunction{typeof(g)}(), g)
     MOI.optimize!(model)
     @test 0 <= MOI.get(model, MOI.SolveTimeSec()) <= 10
+    MOI.empty!(model)
+    @test isnan(MOI.get(model, MOI.SolveTimeSec()))
     return
 end
 
@@ -779,6 +781,57 @@ function test_Optimizer_constructor_bridged()
         () -> MOI.instantiate(HiGHS.Optimizer; with_bridge_type = Float64),
     )
     @test model.inner isa MOI.Bridges.LazyBridgeOptimizer{HiGHS.Optimizer}
+    return
+end
+
+function test_result_attributes_SimplexIterations()
+    N = 10
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    x = MOI.add_variables(model, N)
+    for i in 1:N
+        MOI.add_constraint(model, x[i], MOI.GreaterThan(0.0))
+        MOI.add_constraint(model, x[i], MOI.Integer())
+        set = MathOptLazy.LazyScalarSet(MOI.LessThan(1.0))
+        MOI.add_constraint(model, 1.0 * x[i], set)
+    end
+    f = sum(abs(cos(i)) * x[i] for i in 1:N)
+    MOI.add_constraint(model, f, MOI.LessThan(1.0))
+    MOI.set(model, MOI.ObjectiveSense(), MOI.MAX_SENSE)
+    g = sum(abs(sin(i)) * x[i] for i in 1:N)
+    MOI.set(model, MOI.ObjectiveFunction{typeof(g)}(), g)
+    MOI.optimize!(model)
+    @test MOI.get(model, MOI.BarrierIterations()) >= 0
+    @test MOI.get(model, MOI.NodeCount()) >= 0
+    @test MOI.get(model, MOI.SimplexIterations()) > 0
+    return
+end
+
+function test_result_attributes_BarrierIterations()
+    N = 10
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    MOI.set(model, MOI.RawOptimizerAttribute("presolve"), "off")
+    MOI.set(model, MOI.RawOptimizerAttribute("solver"), "ipm")
+    MOI.set(model, MOI.RawOptimizerAttribute("mip_lp_solver"), "ipm")
+    x = MOI.add_variables(model, N)
+    for i in 1:N
+        MOI.add_constraint(model, x[i], MOI.GreaterThan(0.0))
+        MOI.add_constraint(model, x[i], MOI.Integer())
+        set = MathOptLazy.LazyScalarSet(MOI.LessThan(1.0))
+        MOI.add_constraint(model, 1.0 * x[i], set)
+    end
+    f = sum(abs(cos(i)) * x[i] for i in 1:N)
+    MOI.add_constraint(model, f, MOI.LessThan(1.0))
+    MOI.set(model, MOI.ObjectiveSense(), MOI.MAX_SENSE)
+    g = sum(abs(sin(i)) * x[i] for i in 1:N)
+    MOI.set(model, MOI.ObjectiveFunction{typeof(g)}(), g)
+    MOI.optimize!(model)
+    @test MOI.get(model, MOI.BarrierIterations()) > 0
+    @test MOI.get(model, MOI.NodeCount()) > 0
+    @test MOI.get(model, MOI.SimplexIterations()) >= 0
+    MOI.empty!(model)
+    @test MOI.get(model, MOI.BarrierIterations()) == 0
+    @test MOI.get(model, MOI.NodeCount()) == 0
+    @test MOI.get(model, MOI.SimplexIterations()) == 0
     return
 end
 
