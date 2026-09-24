@@ -408,9 +408,14 @@ function test_delete_lazy_inactive()
     MOI.add_constraint(model, x, MOI.EqualTo(0.0))
     set = MathOptLazy.LazyScalarSet(MOI.EqualTo(1.0))
     c = MOI.add_constraint(model, 1.0 * x, set)
+    F, S = MOI.ScalarAffineFunction{Float64}, typeof(set)
     @test MOI.is_valid(model, c)
+    @test only(MOI.get(model, MOI.ListOfConstraintIndices{F,S}())) == c
+    @test MOI.get(model, MOI.NumberOfConstraints{F,S}()) == 1
     MOI.delete(model, c)
     @test !MOI.is_valid(model, c)
+    @test isempty(MOI.get(model, MOI.ListOfConstraintIndices{F,S}()))
+    @test MOI.get(model, MOI.NumberOfConstraints{F,S}()) == 0
     MOI.optimize!(model)
     @test MOI.get(model, MOI.TerminationStatus()) == MOI.OPTIMAL
     return
@@ -425,7 +430,14 @@ function test_delete_lazy_active()
     c = MOI.add_constraint(model, 1.0 * x, set)
     MOI.optimize!(model)
     @test MOI.get(model, MOI.TerminationStatus()) == MOI.INFEASIBLE
+    F, S = MOI.ScalarAffineFunction{Float64}, typeof(set)
+    @test MOI.is_valid(model, c)
+    @test only(MOI.get(model, MOI.ListOfConstraintIndices{F,S}())) == c
+    @test MOI.get(model, MOI.NumberOfConstraints{F,S}()) == 1
     MOI.delete(model, c)
+    @test !MOI.is_valid(model, c)
+    @test isempty(MOI.get(model, MOI.ListOfConstraintIndices{F,S}()))
+    @test MOI.get(model, MOI.NumberOfConstraints{F,S}()) == 0
     MOI.optimize!(model)
     @test MOI.get(model, MOI.TerminationStatus()) == MOI.OPTIMAL
     return
