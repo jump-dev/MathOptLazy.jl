@@ -459,16 +459,25 @@ function MOI.get(
     model::Optimizer,
     ::MOI.ListOfConstraintIndices{F,LazyScalarSet{S}},
 ) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
-    n = MOI.get(model, MOI.NumberOfConstraints{F,LazyScalarSet{S}}())
-    return [MOI.ConstraintIndex{F,LazyScalarSet{S}}(i) for i in 1:n]
+    ret = MOI.ConstraintIndex{F,LazyScalarSet{S}}[]
+    if (data = _maybe_data(model, F, S)) !== nothing
+        for (i, status) in enumerate(data.status)
+            if status != _kLAZY_CONSTRAINT_DELETED
+                push!(ret, MOI.ConstraintIndex{F,LazyScalarSet{S}}(i))
+            end
+        end
+    end
+    return ret
 end
 
 function MOI.get(
     model::Optimizer,
     ::MOI.NumberOfConstraints{F,LazyScalarSet{S}},
 ) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
-    ret = _maybe_data(model, F, S)
-    return ret === nothing ? 0 : length(ret.data)
+    if (data = _maybe_data(model, F, S)) !== nothing
+        return count(!=(_kLAZY_CONSTRAINT_DELETED), data.status)
+    end
+    return 0
 end
 
 function MOI.add_constraint(
