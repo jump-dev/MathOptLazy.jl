@@ -43,6 +43,9 @@ function test_jump_cached_knapsack()
     @test termination_status(model) == OPTIMAL
     @test primal_status(model) == FEASIBLE_POINT
     @test all(<=(1 + 1e-6), value(x))
+    F = MOI.ScalarAffineFunction{Float64}
+    S = MathOptLazy.LazyScalarSet{MOI.LessThan{Float64}}
+    @test get_attribute(model, MathOptLazy.NumberOfConstraintsActive{F,S}()) > 0
     return
 end
 
@@ -54,10 +57,15 @@ function test_jump_direct_knapsack()
     @constraint(model, [i in 1:N], x[i] <= 1, MathOptLazy.Lazy())
     @constraint(model, sum(abs(cos(i)) * x[i] for i in 1:N) <= 0.1 * N)
     @objective(model, Max, sum(abs(sin(i)) * x[i] for i in 1:N))
+    F = MOI.ScalarAffineFunction{Float64}
+    S = MathOptLazy.LazyScalarSet{MOI.LessThan{Float64}}
+    attr = MathOptLazy.NumberOfConstraintsActive{F,S}()
+    @test MOI.get(backend(model), attr) == 0
     optimize!(model)
     @test termination_status(model) == OPTIMAL
     @test primal_status(model) == FEASIBLE_POINT
     @test all(<=(1 + 1e-6), value(x))
+    @test get_attribute(model, attr) > 0
     return
 end
 
