@@ -644,8 +644,7 @@ Return a count of the number of constraints that are active in the subproblem.
 struct NumberOfConstraintsActive{
     F<:MOI.AbstractScalarFunction,
     S<:LazyScalarSet{<:MOI.AbstractScalarSet},
-} <: MOI.AbstractModelAttribute
-end
+} <: MOI.AbstractModelAttribute end
 
 MOI.is_set_by_optimize(::NumberOfConstraintsActive) = true
 
