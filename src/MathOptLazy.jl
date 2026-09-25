@@ -631,6 +631,30 @@ MOI.get(model::Optimizer, ::MOI.SimplexIterations) = model.simplex_iterations
 
 MOI.get(model::Optimizer, ::MOI.SolveTimeSec) = model.solve_time_sec
 
+### MathOptLazy.NumberOfConstraintsActive
+
+"""
+    NumberOfConstraintsActive{F,LazyScalarSet{S}}() where {
+        F<:MOI.AbstractScalarFunction,
+        S<:MOI.AbstractScalarSet,
+    }
+
+Return a count of the number of constraints that are active in the subproblem.
+"""
+struct NumberOfConstraintsActive{
+    F<:MOI.AbstractScalarFunction,
+    S<:LazyScalarSet{<:MOI.AbstractScalarSet},
+} <: MOI.AbstractModelAttribute end
+
+MOI.is_set_by_optimize(::NumberOfConstraintsActive) = true
+
+function MOI.get(
+    model::Optimizer,
+    ::NumberOfConstraintsActive{F,LazyScalarSet{S}},
+) where {F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
+    return count(==(_kLAZY_CONSTRAINT_ACTIVE), _data(model, F, S).status)
+end
+
 ### MOI.optimize!
 
 function _try_get(model::Optimizer, attr::MOI.AbstractModelAttribute, default)
