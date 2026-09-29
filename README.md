@@ -3,7 +3,8 @@
 [![Build Status](https://github.com/jump-dev/MathOptLazy.jl/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jump-dev/MathOptLazy.jl/actions?query=workflow%3ACI)
 [![codecov](https://codecov.io/gh/jump-dev/MathOptLazy.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/jump-dev/MathOptLazy.jl)
 
-[MathOptLazy.jl](https://github.com/jump-dev/MathOptLazy.jl) is an experimental meta-solver for problems with lazy constraints.
+[MathOptLazy.jl](https://github.com/jump-dev/MathOptLazy.jl) is a meta-solver
+for problems with lazy constraints.
 
 ## License
 
@@ -31,10 +32,21 @@ Use `MathOptLazy.jl` with JuMP as follows:
 using JuMP
 import HiGHS
 import MathOptLazy
+# Pass () -> MathOptLazy.Optimizer(inner_optimizer) as the solver
 model = Model(() -> MathOptLazy.Optimizer(HiGHS.Optimizer))
+# Choose an algorithm
 set_attribute(model, MathOptLazy.Algorithm(), MathOptLazy.Iterative())
 @variable(model, x[1:10] >= 0)
+# Tag constraints as lazy
 @constraint(model, [i in 1:10], x[i] <= 1, MathOptLazy.Lazy())
+# You can also pass the `lazy` keyword to Lazy()
+is_lazy = rand(Bool)
+@constraint(model, sum(x) <= 3, MathOptLazy.Lazy(; lazy = is_lazy))
+# You can also use this constructor to opt-in to lazy constraints of the given
+# type if and only if the solver supports them. This simplifies writing a model
+# where the user gets to choose the solver.
+tag = MathOptLazy.Lazy(model, AffExpr, MOI.GreaterThan{Float64})
+@constraint(model, sum(x) >= 2, tag)
 ```
 
 ## Algorithm
