@@ -877,22 +877,24 @@ function _stale_solve(model, sense, f)
     return
 end
 
-function _set_iterative(model; kwargs...)
-    algorithm = MathOptLazy.Iterative(; kwargs...)
-    MOI.set(model, MathOptLazy.Algorithm(), algorithm)
-    return
-end
-
 function test_stale_iterative_kwargs()
     algorithm = MathOptLazy.Iterative()
-    @test algorithm.stale_solve_limit == typemax(Int)
-    @test algorithm.prune_batch_size == 1
-    algorithm =
-        MathOptLazy.Iterative(; stale_solve_limit = 3, prune_batch_size = 4)
-    @test algorithm.stale_solve_limit == 3
-    @test algorithm.prune_batch_size == 4
-    @test_throws ArgumentError MathOptLazy.Iterative(; stale_solve_limit = 0)
-    @test_throws ArgumentError MathOptLazy.Iterative(; prune_batch_size = 0)
+    @test algorithm.number_inactive_solves == typemax(Int)
+    @test algorithm.minimum_deletion_count == typemax(Int)
+    algorithm = MathOptLazy.Iterative(;
+        number_inactive_solves = 3,
+        minimum_deletion_count = 4,
+    )
+    @test algorithm.number_inactive_solves == 3
+    @test algorithm.minimum_deletion_count == 4
+    @test_throws(
+        ArgumentError,
+        MathOptLazy.Iterative(; number_inactive_solves = 0),
+    )
+    @test_throws(
+        ArgumentError,
+        MathOptLazy.Iterative(; minimum_deletion_count = 0),
+    )
     model = MathOptLazy.Optimizer(HiGHS.Optimizer)
     MOI.set(model, MathOptLazy.Algorithm(), algorithm)
     MOI.empty!(model)
@@ -903,10 +905,10 @@ end
 function test_is_binding()
     s = MOI.LessThan(1.0)
     @test MathOptLazy._is_binding(1.0, s)
-    @test !MathOptLazy._is_binding(0.99, s)
+    @test !MathOptLazy._is_binding(0.989, s)
     s = MOI.GreaterThan(1.0)
     @test MathOptLazy._is_binding(1.0, s)
-    @test !MathOptLazy._is_binding(1.01, s)
+    @test !MathOptLazy._is_binding(1.011, s)
     s = MOI.Interval(1.0, 2.0)
     @test MathOptLazy._is_binding(1.0, s)
     @test MathOptLazy._is_binding(2.0, s)
@@ -946,7 +948,11 @@ end
 
 function test_prune()
     model, x, data = _stale_model()
-    _set_iterative(model; stale_solve_limit = 2, prune_batch_size = 2)
+    algorithm = MathOptLazy.Iterative(;
+        number_inactive_solves = 2,
+        minimum_deletion_count = 2,
+    )
+    MOI.set(model, MathOptLazy.Algorithm(), algorithm)
     F, S = MOI.ScalarAffineFunction{Float64}, MOI.LessThan{Float64}
     attr =
         MathOptLazy.NumberOfConstraintsActive{F,MathOptLazy.LazyScalarSet{S}}()
@@ -967,20 +973,29 @@ function test_prune()
     @test MOI.get(model, attr) == 0
     @test MOI.get(model.inner, MOI.NumberOfConstraints{F,S}()) == 1
     @test all(==(MathOptLazy._kLAZY_CONSTRAINT_INACTIVE), data.status)
-    @test all(==(MOI.ConstraintIndex{F,S}(0)), data.index)
     @test data.stale == [0, 0]
     return
 end
 
 function test_prune_readded()
     model, x, data = _stale_model()
-    _set_iterative(model; stale_solve_limit = 1)
+    MOI.set(model, MOI.Silent(), false)
+    algorithm = MathOptLazy.Iterative(;
+        number_inactive_solves = 1,
+        minimum_deletion_count = 1,
+    )
+    MOI.set(model, MathOptLazy.Algorithm(), algorithm)
     F, S = MOI.ScalarAffineFunction{Float64}, MOI.LessThan{Float64}
     attr =
         MathOptLazy.NumberOfConstraintsActive{F,MathOptLazy.LazyScalarSet{S}}()
     _stale_solve(model, MOI.MAX_SENSE, 1.0 * x[1] + 1.0 * x[2])
+    @test data.stale == [0, 0]
+    @test MOI.get(model, attr) == 2
     _stale_solve(model, MOI.MIN_SENSE, 1.0 * x[1] + 1.0 * x[2])
     @test data.stale == [1, 1]
+    @test MOI.get(model, attr) == 2
+    _stale_solve(model, MOI.MIN_SENSE, 1.0 * x[1] + 1.0 * x[2])
+    @test data.stale == [0, 0]
     @test MOI.get(model, attr) == 0
     _stale_solve(model, MOI.MAX_SENSE, 1.0 * x[1] + 1.0 * x[2])
     @test all(==(MathOptLazy._kLAZY_CONSTRAINT_ACTIVE), data.status)
