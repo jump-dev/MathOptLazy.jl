@@ -979,6 +979,7 @@ end
 
 function test_prune_readded()
     model, x, data = _stale_model()
+    MOI.set(model, MOI.Silent(), false)
     algorithm = MathOptLazy.Iterative(;
         number_inactive_solves = 1,
         minimum_deletion_count = 1,
