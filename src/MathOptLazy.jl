@@ -90,6 +90,7 @@ struct _LazyData{F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
     data::Vector{Tuple{F,S}}
     status::Vector{_LAZY_CONSTRAINT_STATUS}
     index::Vector{MOI.ConstraintIndex{F,S}}
+    stale::Vector{Int}
 
     function _LazyData{
         F,
@@ -99,6 +100,7 @@ struct _LazyData{F<:MOI.AbstractScalarFunction,S<:MOI.AbstractScalarSet}
             Tuple{F,S}[],
             _LAZY_CONSTRAINT_STATUS[],
             MOI.ConstraintIndex{F,S}[],
+            Int[],
         )
     end
 end
@@ -122,7 +124,7 @@ struct Algorithm <: MOI.AbstractOptimizerAttribute end
 abstract type AbstractAlgorithm end
 
 """
-    Iterative()
+    Iterative(; stale_solve_limit::Int = typemax(Int), prune_batch_size::Int = 1)
 
 This algorithm iteratively solves a sequence of problems that iteratively add
 violated lazy constraints to the main problem.
@@ -145,8 +147,30 @@ warm-start from the previous basis after new constraints are added, whereas
 every iteration of the second phase solves a mixed-integer program from
 scratch. The second phase is still needed because a lazy constraint can be
 violated by an integer solution even if the relaxation satisfies it.
+
+## Stale constraints
+
+An active lazy constraint is stale if it has been non-binding for at least
+`stale_solve_limit` consecutive solves (including internal iterative solves).
+Stale constraints are pruned before solving if there are at least
+`prune_batch_size` stale constraints.
 """
-struct Iterative <: AbstractAlgorithm end
+struct Iterative <: AbstractAlgorithm
+    stale_solve_limit::Int
+    prune_batch_size::Int
+
+    function Iterative(;
+        stale_solve_limit::Int = typemax(Int),
+        prune_batch_size::Int = typemax(Int),
+    )
+        if stale_solve_limit < 1
+            throw(ArgumentError("stale_solve_limit must be at least 1."))
+        elseif prune_batch_size < 1
+            throw(ArgumentError("prune_batch_size must be at least 1."))
+        end
+        return new(stale_solve_limit, prune_batch_size)
+    end
+end
 
 """
     Callback()
@@ -489,6 +513,7 @@ function MOI.add_constraint(
     push!(data.data, (f, s.set))
     push!(data.status, _kLAZY_CONSTRAINT_INACTIVE)
     push!(data.index, MOI.ConstraintIndex{F,S}(0))
+    push!(data.stale, 0)
     return MOI.ConstraintIndex{F,LazyScalarSet{S}}(length(data.data))
 end
 
@@ -655,6 +680,87 @@ function MOI.get(
     return count(==(_kLAZY_CONSTRAINT_ACTIVE), _data(model, F, S).status)
 end
 
+### MathOptLazy.prune_stale_constraints!
+
+function _is_stale(algorithm::Iterative, data::_LazyData, i::Int)
+    return data.status[i] == _kLAZY_CONSTRAINT_ACTIVE &&
+           data.stale[i] >= algorithm.stale_solve_limit
+end
+
+function _number_stale(algorithm::Iterative, data::_LazyData)
+    return count(i -> _is_stale(algorithm, data, i), eachindex(data.status))
+end
+
+function _prune_stale!(
+    model::Optimizer,
+    algorithm::Iterative,
+    data::_LazyData{F,S},
+) where {F,S}
+    constraints_pruned = 0
+    for i in reverse(eachindex(data.status))
+        if _is_stale(algorithm, data, i)
+            MOI.delete(model.inner, data.index[i])
+            data.index[i] = MOI.ConstraintIndex{F,S}(0)
+            data.status[i] = _kLAZY_CONSTRAINT_INACTIVE
+            data.stale[i] = 0
+            constraints_pruned += 1
+        end
+    end
+    return constraints_pruned
+end
+
+function _prune_stale!(model::Optimizer, algorithm::Iterative)
+    return sum(
+        d -> _prune_stale!(model, algorithm, d),
+        values(model.lazy);
+        init = 0,
+    )
+end
+
+function _maybe_prune_stale!(model::Optimizer, algorithm::Iterative)
+    n = sum(d -> _number_stale(algorithm, d), values(model.lazy); init = 0)
+    if n < algorithm.prune_batch_size
+        return
+    end
+    _prune_stale!(model, algorithm)
+    if !model.silent
+        println("[MathOptLazy] pruned $(n) stale constraints")
+    end
+    return
+end
+
+_is_binding(y, s::MOI.LessThan) = y >= s.upper - 1e-2
+_is_binding(y, s::MOI.GreaterThan) = y <= s.lower + 1e-2
+_is_binding(y, s::MOI.Interval) = y <= s.lower + 1e-2 || y >= s.upper - 1e-2
+
+# For sets whose slackness we can't measure, assume they bind and don't prune.
+_is_binding(y, ::MOI.AbstractScalarSet) = true
+
+function _update_stale!(model::Optimizer, data::_LazyData)
+    for (i, (_, s)) in enumerate(data.data)
+        if data.status[i] != _kLAZY_CONSTRAINT_ACTIVE
+            continue
+        end
+        y = MOI.get(model.inner, MOI.ConstraintPrimal(), data.index[i])
+        if _is_binding(y, s)
+            data.stale[i] = 0
+        else
+            data.stale[i] += 1
+        end
+    end
+    return
+end
+
+function _update_stale!(model::Optimizer)
+    if MOI.get(model, MOI.PrimalStatus()) != MOI.FEASIBLE_POINT
+        return
+    end
+    for data in values(model.lazy)
+        _update_stale!(model, data)
+    end
+    return
+end
+
 ### MOI.optimize!
 
 function _try_get(model::Optimizer, attr::MOI.AbstractModelAttribute, default)
@@ -690,7 +796,7 @@ end
 
 ### MathOptLazy.Iterative
 
-function _optimize!(model::Optimizer, ::Iterative)
+function _optimize!(model::Optimizer, algorithm::Iterative)
     if (undo = _relax_integrality(model.inner)) !== nothing
         if !model.silent
             println("[MathOptLazy] relaxing binary and integer variables")
@@ -701,6 +807,7 @@ function _optimize!(model::Optimizer, ::Iterative)
         end
         undo()
     end
+    _maybe_prune_stale!(model, algorithm)
     _iterate(model; start = true)
     return
 end
@@ -722,6 +829,7 @@ function _iterate(model::Optimizer; start::Bool)
             println("[MathOptLazy] solving current subproblem\n")
         end
         _optimize_inner!(model)
+        _update_stale!(model)
         if MOI.get(model, MOI.TerminationStatus()) == MOI.DUAL_INFEASIBLE
             # The problem is unbounded, but it might not be if we add more
             # constraints.

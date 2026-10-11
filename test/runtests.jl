@@ -855,6 +855,140 @@ function test_result_attributes_BarrierIterations()
     return
 end
 
+function _stale_model()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    MOI.set(model, MOI.Silent(), true)
+    x = MOI.add_variables(model, 2)
+    MOI.add_constraint.(model, x, MOI.GreaterThan(0.0))
+    MOI.add_constraint(model, 1.0 * x[1] + 1.0 * x[2], MOI.LessThan(10.0))
+    for xi in x
+        set = MathOptLazy.LazyScalarSet(MOI.LessThan(1.0))
+        MOI.add_constraint(model, 1.0 * xi, set)
+    end
+    F, S = MOI.ScalarAffineFunction{Float64}, MOI.LessThan{Float64}
+    return model, x, MathOptLazy._data(model, F, S)
+end
+
+function _stale_solve(model, sense, f)
+    MOI.set(model, MOI.ObjectiveSense(), sense)
+    MOI.set(model, MOI.ObjectiveFunction{typeof(f)}(), f)
+    MOI.optimize!(model)
+    @test MOI.get(model, MOI.TerminationStatus()) == MOI.OPTIMAL
+    return
+end
+
+function _set_iterative(model; kwargs...)
+    algorithm = MathOptLazy.Iterative(; kwargs...)
+    MOI.set(model, MathOptLazy.Algorithm(), algorithm)
+    return
+end
+
+function test_stale_iterative_kwargs()
+    algorithm = MathOptLazy.Iterative()
+    @test algorithm.stale_solve_limit == typemax(Int)
+    @test algorithm.prune_batch_size == 1
+    algorithm =
+        MathOptLazy.Iterative(; stale_solve_limit = 3, prune_batch_size = 4)
+    @test algorithm.stale_solve_limit == 3
+    @test algorithm.prune_batch_size == 4
+    @test_throws ArgumentError MathOptLazy.Iterative(; stale_solve_limit = 0)
+    @test_throws ArgumentError MathOptLazy.Iterative(; prune_batch_size = 0)
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    MOI.set(model, MathOptLazy.Algorithm(), algorithm)
+    MOI.empty!(model)
+    @test MOI.get(model, MathOptLazy.Algorithm()) == algorithm
+    return
+end
+
+function test_is_binding()
+    s = MOI.LessThan(1.0)
+    @test MathOptLazy._is_binding(1.0, s)
+    @test !MathOptLazy._is_binding(0.99, s)
+    s = MOI.GreaterThan(1.0)
+    @test MathOptLazy._is_binding(1.0, s)
+    @test !MathOptLazy._is_binding(1.01, s)
+    s = MOI.Interval(1.0, 2.0)
+    @test MathOptLazy._is_binding(1.0, s)
+    @test MathOptLazy._is_binding(2.0, s)
+    @test !MathOptLazy._is_binding(1.5, s)
+    @test MathOptLazy._is_binding(1.5, MOI.EqualTo(1.0))
+    @test MathOptLazy._is_binding(0.5, MOI.ZeroOne())
+    return
+end
+
+function test_stale_counter()
+    model, x, data = _stale_model()
+    @test data.stale == [0, 0]
+    _stale_solve(model, MOI.MAX_SENSE, 1.0 * x[1] + 1.0 * x[2])
+    @test data.stale == [0, 0]
+    _stale_solve(model, MOI.MAX_SENSE, 1.0 * x[1] - 1.0 * x[2])
+    @test data.stale == [0, 1]
+    MOI.optimize!(model)
+    @test data.stale == [0, 2]
+    _stale_solve(model, MOI.MIN_SENSE, 1.0 * x[1] + 1.0 * x[2])
+    @test data.stale == [1, 3]
+    _stale_solve(model, MOI.MAX_SENSE, 1.0 * x[1] + 1.0 * x[2])
+    @test data.stale == [0, 0]
+    return
+end
+
+function test_stale_counter_no_feasible_point()
+    model, x, data = _stale_model()
+    _stale_solve(model, MOI.MAX_SENSE, 1.0 * x[1] + 1.0 * x[2])
+    _stale_solve(model, MOI.MIN_SENSE, 1.0 * x[1] + 1.0 * x[2])
+    @test data.stale == [1, 1]
+    MOI.add_constraint(model, 1.0 * x[1], MOI.GreaterThan(2.0))
+    MOI.optimize!(model)
+    @test MOI.get(model, MOI.TerminationStatus()) == MOI.INFEASIBLE
+    @test data.stale == [1, 1]
+    return
+end
+
+function test_prune()
+    model, x, data = _stale_model()
+    _set_iterative(model; stale_solve_limit = 2, prune_batch_size = 2)
+    F, S = MOI.ScalarAffineFunction{Float64}, MOI.LessThan{Float64}
+    attr =
+        MathOptLazy.NumberOfConstraintsActive{F,MathOptLazy.LazyScalarSet{S}}()
+    _stale_solve(model, MOI.MAX_SENSE, 1.0 * x[1] + 1.0 * x[2])
+    _stale_solve(model, MOI.MAX_SENSE, 1.0 * x[1] - 1.0 * x[2])
+    MOI.optimize!(model)
+    @test data.stale == [0, 2]
+    MOI.optimize!(model)
+    @test data.stale == [0, 3]
+    @test MOI.get(model, attr) == 2
+    _stale_solve(model, MOI.MIN_SENSE, 1.0 * x[1] + 1.0 * x[2])
+    MOI.optimize!(model)
+    @test data.stale == [2, 5]
+    @test MOI.get(model, attr) == 2
+    @test MOI.get(model.inner, MOI.NumberOfConstraints{F,S}()) == 3
+    MOI.optimize!(model)
+    @test MOI.get(model, MOI.TerminationStatus()) == MOI.OPTIMAL
+    @test MOI.get(model, attr) == 0
+    @test MOI.get(model.inner, MOI.NumberOfConstraints{F,S}()) == 1
+    @test all(==(MathOptLazy._kLAZY_CONSTRAINT_INACTIVE), data.status)
+    @test all(==(MOI.ConstraintIndex{F,S}(0)), data.index)
+    @test data.stale == [0, 0]
+    return
+end
+
+function test_prune_readded()
+    model, x, data = _stale_model()
+    _set_iterative(model; stale_solve_limit = 1)
+    F, S = MOI.ScalarAffineFunction{Float64}, MOI.LessThan{Float64}
+    attr =
+        MathOptLazy.NumberOfConstraintsActive{F,MathOptLazy.LazyScalarSet{S}}()
+    _stale_solve(model, MOI.MAX_SENSE, 1.0 * x[1] + 1.0 * x[2])
+    _stale_solve(model, MOI.MIN_SENSE, 1.0 * x[1] + 1.0 * x[2])
+    @test data.stale == [1, 1]
+    @test MOI.get(model, attr) == 0
+    _stale_solve(model, MOI.MAX_SENSE, 1.0 * x[1] + 1.0 * x[2])
+    @test all(==(MathOptLazy._kLAZY_CONSTRAINT_ACTIVE), data.status)
+    @test data.stale == [0, 0]
+    @test MOI.get(model, attr) == 2
+    return
+end
+
 end  # TestMathOptLazy
 
 TestMathOptLazy.runtests()
