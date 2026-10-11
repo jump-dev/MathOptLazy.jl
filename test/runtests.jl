@@ -979,15 +979,23 @@ end
 
 function test_prune_readded()
     model, x, data = _stale_model()
-    algorithm = MathOptLazy.Iterative(; number_inactive_solves = 1)
+    algorithm = MathOptLazy.Iterative(;
+        number_inactive_solves = 1,
+        minimum_deletion_count = 1,
+    )
     MOI.set(model, MathOptLazy.Algorithm(), algorithm)
     F, S = MOI.ScalarAffineFunction{Float64}, MOI.LessThan{Float64}
     attr =
         MathOptLazy.NumberOfConstraintsActive{F,MathOptLazy.LazyScalarSet{S}}()
     _stale_solve(model, MOI.MAX_SENSE, 1.0 * x[1] + 1.0 * x[2])
+    @test data.stale == [0, 0]
+    @test MOI.get(model, attr) == 2
     _stale_solve(model, MOI.MIN_SENSE, 1.0 * x[1] + 1.0 * x[2])
     @test data.stale == [1, 1]
     @test MOI.get(model, attr) == 2
+    _stale_solve(model, MOI.MIN_SENSE, 1.0 * x[1] + 1.0 * x[2])
+    @test data.stale == [0, 0]
+    @test MOI.get(model, attr) == 0
     _stale_solve(model, MOI.MAX_SENSE, 1.0 * x[1] + 1.0 * x[2])
     @test all(==(MathOptLazy._kLAZY_CONSTRAINT_ACTIVE), data.status)
     @test data.stale == [0, 0]
