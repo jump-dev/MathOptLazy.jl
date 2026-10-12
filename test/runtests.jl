@@ -1004,6 +1004,35 @@ function test_prune_readded()
     return
 end
 
+function test_variable_primal_start()
+    model = MathOptLazy.Optimizer(HiGHS.Optimizer)
+    MOI.set(model, MOI.Silent(), true)
+    x = MOI.add_variables(model, 10)
+    MOI.add_constraint.(model, x, MOI.Integer())
+    for i in 1:10
+        @test MOI.get(model, MOI.VariablePrimalStart(), x[i]) == nothing
+        MOI.set(model, MOI.VariablePrimalStart(), x[i], i / 10)
+        @test MOI.get(model, MOI.VariablePrimalStart(), x[i]) == i / 10
+        MOI.set(model, MOI.VariablePrimalStart(), x[i], nothing)
+        @test MOI.get(model, MOI.VariablePrimalStart(), x[i]) == nothing
+        MOI.set(model, MOI.VariablePrimalStart(), x[i], i / 10)
+        @test MOI.get(model, MOI.VariablePrimalStart(), x[i]) == i / 10
+    end
+    set = MathOptLazy.LazyScalarSet(MOI.GreaterThan(0.0))
+    MOI.add_constraint.(model, x, set)
+    set = MathOptLazy.LazyScalarSet(MOI.LessThan(1.0))
+    MOI.add_constraint.(model, x, set)
+    MOI.set(model, MOI.ObjectiveSense(), MOI.MAX_SENSE)
+    f = rand(10)' * x
+    MOI.set(model, MOI.ObjectiveFunction{typeof(f)}(), f)
+    MOI.optimize!(model)
+    @test MOI.get(model, MOI.TerminationStatus()) == MOI.OPTIMAL
+    for i in 1:10
+        @test MOI.get(model, MOI.VariablePrimalStart(), x[i]) == i / 10
+    end
+    return
+end
+
 end  # TestMathOptLazy
 
 TestMathOptLazy.runtests()
