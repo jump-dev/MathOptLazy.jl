@@ -685,7 +685,7 @@ function MOI.set(
     model::Optimizer,
     ::MOI.VariablePrimalStart,
     x::MOI.VariableIndex,
-    value::Real
+    value::Real,
 )
     model.variable_primal_start[x] = convert(Float64, value)
     return
