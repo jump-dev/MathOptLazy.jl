@@ -241,6 +241,7 @@ mutable struct Optimizer{OT<:MOI.ModelLike} <: MOI.AbstractOptimizer
     algorithm::AbstractAlgorithm
     lazy::Dict{Tuple{Type,Type},_LazyData}
     silent::Bool
+    variable_primal_start::Dict{MOI.VariableIndex,Float64}
     # Result attributes
     barrier_iterations::Int64
     node_count::Int64
@@ -254,6 +255,7 @@ mutable struct Optimizer{OT<:MOI.ModelLike} <: MOI.AbstractOptimizer
             Iterative(),
             Dict{Tuple{Type,Type},_LazyData}(),
             false,
+            Dict{MOI.VariableIndex,Float64}(),
             0,
             0,
             0,
@@ -294,6 +296,7 @@ end
 function MOI.empty!(model::Optimizer)
     MOI.empty!(model.inner)
     empty!(model.lazy)
+    empty!(model.variable_primal_start)
     model.barrier_iterations = 0
     model.node_count = 0
     model.simplex_iterations = 0
@@ -372,6 +375,14 @@ function MOI.supports(
     ::Type{MOI.VariableIndex},
 )
     return MOI.supports(model.inner, arg, MOI.VariableIndex)
+end
+
+function MOI.get(model::Optimizer, attr::MOI.ListOfVariableAttributesSet)
+    ret = MOI.get(model.inner, attr)
+    if !isempty(model.variable_primal_start)
+        push!(ret, MOI.VariablePrimalStart())
+    end
+    return ret
 end
 
 ### AbstractConstraintAttribute
@@ -652,6 +663,44 @@ function MOI.get(
     return 0.0
 end
 
+### MOI.VariablePrimalStart
+
+function MOI.supports(
+    model::Optimizer,
+    attr::MOI.VariablePrimalStart,
+    ::Type{MOI.VariableIndex},
+)
+    return MOI.supports(model.inner, attr, MOI.VariableIndex)
+end
+
+function MOI.get(
+    model::Optimizer,
+    ::MOI.VariablePrimalStart,
+    x::MOI.VariableIndex,
+)
+    return get(model.variable_primal_start, x, nothing)
+end
+
+function MOI.set(
+    model::Optimizer,
+    ::MOI.VariablePrimalStart,
+    x::MOI.VariableIndex,
+    value::Real,
+)
+    model.variable_primal_start[x] = convert(Float64, value)
+    return
+end
+
+function MOI.set(
+    model::Optimizer,
+    ::MOI.VariablePrimalStart,
+    x::MOI.VariableIndex,
+    ::Nothing,
+)
+    delete!(model.variable_primal_start, x)
+    return
+end
+
 ### MOI.BarrierIterations
 
 MOI.get(model::Optimizer, ::MOI.BarrierIterations) = model.barrier_iterations
@@ -728,6 +777,12 @@ end
 ### MathOptLazy.Iterative
 
 function _optimize!(model::Optimizer, algorithm::Iterative)
+    start = MOI.supports(model, MOI.VariablePrimalStart(), MOI.VariableIndex)
+    if start  # Re-start the VariablePrimalStart to the user's value.
+        for (k, v) in model.variable_primal_start
+            MOI.set(model.inner, MOI.VariablePrimalStart(), k, v)
+        end
+    end
     if (undo = _relax_integrality(model.inner)) !== nothing
         if !model.silent
             println("[MathOptLazy] relaxing binary and integer variables")
@@ -739,21 +794,13 @@ function _optimize!(model::Optimizer, algorithm::Iterative)
         undo()
     end
     _run_cut_selection!(model, algorithm)
-    _iterate(model; start = true)
+    _iterate(model; start)
     return
 end
 
 function _iterate(model::Optimizer; start::Bool)
     constraints_added = 1  # A white lie to enter the iteration loop
     x = MOI.get(model, MOI.ListOfVariableIndices())
-    # TODO(odow): if the solver supports VariablePrimalStart, we will update the
-    # primal starts during the solve process. This is destructive and in-place.
-    # That is, we will overwrite any start set by the user. We can't restore the
-    # start at the end of the loop because this may invalidate the inner
-    # solver's solution. To fix properly, we should cache the start in
-    # ::Optimizer, but this is a hassle and no one probably cares. Revisit this
-    # decision if it ever becomes a problem.
-    start &= MOI.supports(model, MOI.VariablePrimalStart(), MOI.VariableIndex)
     while constraints_added > 0
         constraints_added = 0
         if !model.silent
@@ -773,7 +820,7 @@ function _iterate(model::Optimizer; start::Bool)
             end
             if start && constraints_added > 0
                 for (xi, v) in X
-                    MOI.set(model, MOI.VariablePrimalStart(), xi, v)
+                    MOI.set(model.inner, MOI.VariablePrimalStart(), xi, v)
                 end
             end
         end
